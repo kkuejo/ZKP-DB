@@ -1,0 +1,33 @@
+{
+  "name": "zkp-db",
+  "version": "1.0.0",
+  "description": "Zero-Knowledge Proof Database with Homomorphic Encryption for Medical Data",
+  "main": "index.js",
+  "scripts": {
+    "compile-circuit": "cd circuits && circom data_verification.circom --r1cs --wasm --sym",
+    "setup": "node scripts/setup.js",
+    "generate-proof": "node scripts/generate_proof.js",
+    "verify-proof": "node scripts/verify_proof.js",
+    "pdf": "bash scripts/convert_to_pdf.sh all",
+    "pdf:explain": "bash scripts/convert_to_pdf.sh docs/ZKP-DB_Explain.md",
+    "pdf:explain2": "bash scripts/convert_to_pdf.sh docs/ZKP-DB_Explain2.md",
+    "pdf:techspec": "bash scripts/convert_to_pdf.sh docs/ZKP-DB-TechSpec.md"
+  },
+  "keywords": [
+    "zkp",
+    "zero-knowledge-proof",
+    "homomorphic-encryption",
+    "medical-data",
+    "privacy"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "snarkjs": "^0.7.0",
+    "circomlib": "^2.0.5"
+  },
+  "devDependencies": {
+    "circom": "^2.1.6",
+    "md-to-pdf": "^5.2.4"
+  }
+}

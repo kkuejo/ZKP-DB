@@ -1,0 +1,237 @@
+/* PDF出力用のスタイルシート */
+
+@page {
+  margin: 20mm;
+  size: A4;
+}
+
+body {
+  font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic ProN', 'メイリオ', Meiryo, sans-serif;
+  font-size: 11pt;
+  line-height: 1.6;
+  color: #333;
+  max-width: 100%;
+}
+
+/* 見出し */
+h1 {
+  font-size: 24pt;
+  font-weight: bold;
+  margin-top: 20pt;
+  margin-bottom: 10pt;
+  padding-bottom: 5pt;
+  border-bottom: 3px solid #2c3e50;
+  page-break-after: avoid;
+}
+
+h2 {
+  font-size: 18pt;
+  font-weight: bold;
+  margin-top: 15pt;
+  margin-bottom: 8pt;
+  padding-bottom: 3pt;
+  border-bottom: 2px solid #3498db;
+  page-break-after: avoid;
+}
+
+h3 {
+  font-size: 14pt;
+  font-weight: bold;
+  margin-top: 12pt;
+  margin-bottom: 6pt;
+  color: #2c3e50;
+  page-break-after: avoid;
+}
+
+h4 {
+  font-size: 12pt;
+  font-weight: bold;
+  margin-top: 10pt;
+  margin-bottom: 5pt;
+  color: #34495e;
+  page-break-after: avoid;
+}
+
+/* コードブロック */
+pre {
+  background-color: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-left: 4px solid #3498db;
+  padding: 10pt;
+  margin: 10pt 0;
+  overflow-x: auto;
+  font-family: 'Courier New', Consolas, monospace;
+  font-size: 9pt;
+  line-height: 1.4;
+  page-break-inside: avoid;
+}
+
+code {
+  background-color: #f8f9fa;
+  padding: 2pt 4pt;
+  border-radius: 3px;
+  font-family: 'Courier New', Consolas, monospace;
+  font-size: 10pt;
+  color: #e74c3c;
+}
+
+pre code {
+  background-color: transparent;
+  padding: 0;
+  color: #333;
+}
+
+/* テーブル */
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 10pt 0;
+  font-size: 10pt;
+  page-break-inside: avoid;
+}
+
+th {
+  background-color: #3498db;
+  color: white;
+  font-weight: bold;
+  padding: 8pt;
+  text-align: left;
+  border: 1px solid #2980b9;
+}
+
+td {
+  padding: 6pt 8pt;
+  border: 1px solid #dee2e6;
+}
+
+tr:nth-child(even) {
+  background-color: #f8f9fa;
+}
+
+/* リスト */
+ul, ol {
+  margin: 8pt 0;
+  padding-left: 25pt;
+}
+
+li {
+  margin: 4pt 0;
+}
+
+/* 強調 */
+strong, b {
+  font-weight: bold;
+  color: #2c3e50;
+}
+
+em, i {
+  font-style: italic;
+}
+
+/* リンク */
+a {
+  color: #3498db;
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* 引用 */
+blockquote {
+  border-left: 4px solid #95a5a6;
+  padding-left: 15pt;
+  margin: 10pt 0;
+  color: #7f8c8d;
+  font-style: italic;
+}
+
+/* 水平線 */
+hr {
+  border: none;
+  border-top: 2px solid #bdc3c7;
+  margin: 20pt 0;
+}
+
+/* ページブレイク制御 */
+.page-break {
+  page-break-after: always;
+}
+
+/* 画像 */
+img {
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin: 10pt auto;
+}
+
+/* チェックボックス（タスクリスト） */
+input[type="checkbox"] {
+  margin-right: 5pt;
+}
+
+/* フッター・ヘッダー */
+@page {
+  @top-right {
+    content: counter(page);
+    font-size: 9pt;
+    color: #7f8c8d;
+  }
+}
+
+/* 印刷時の調整 */
+@media print {
+  body {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  a {
+    color: #3498db;
+  }
+
+  pre, blockquote, table {
+    page-break-inside: avoid;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    page-break-after: avoid;
+  }
+}
+
+/* カスタムクラス */
+.highlight {
+  background-color: #fff3cd;
+  padding: 2pt 4pt;
+  border-radius: 3px;
+}
+
+.note {
+  background-color: #d1ecf1;
+  border-left: 4px solid #17a2b8;
+  padding: 10pt;
+  margin: 10pt 0;
+}
+
+.warning {
+  background-color: #fff3cd;
+  border-left: 4px solid #ffc107;
+  padding: 10pt;
+  margin: 10pt 0;
+}
+
+.error {
+  background-color: #f8d7da;
+  border-left: 4px solid #dc3545;
+  padding: 10pt;
+  margin: 10pt 0;
+}
+
+.success {
+  background-color: #d4edda;
+  border-left: 4px solid #28a745;
+  padding: 10pt;
+  margin: 10pt 0;
+}
