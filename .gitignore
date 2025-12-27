@@ -57,7 +57,3 @@ Thumbs.db
 # 一時ファイル
 tmp/
 temp/
-
-# 生成されたPDF
-*.pdf
-docs/*.pdf
