@@ -1,0 +1,80 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation (not needed in container)
+*.md
+docs/
+
+# Frontend files (deployed separately on GitHub Pages)
+frontend/
+index.html
+styles.css
+script.js
+
+# Test files
+tests/
+test_*.py
+*_test.py
+
+# Logs
+*.log
+logs/
+
+# Local data files
+data/
+*.csv
+*.pkl
+
+# Secret contexts (regenerated at runtime)
+backend/secret_contexts/
+secret_contexts/
+
+# Node modules (will be installed globally)
+node_modules/
+
+# Large ZKP ceremony files (keep only final keys)
+circuits/keys/pot14_0000.ptau
+circuits/keys/pot14_0001.ptau
+
+# Temporary files
+*.tmp
+tmp/
+temp/
+
+# CI/CD
+.github/
+render.yaml
+
+# Environment files
+.env
+.env.local

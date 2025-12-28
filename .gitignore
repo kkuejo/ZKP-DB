@@ -29,23 +29,25 @@ data/*.json
 data/*.csv
 data/*.pkl
 
-# 暗号鍵
+# 暗号鍵（大きなセットアップファイルのみ除外）
 keys/*.ptau
-keys/*.zkey
 keys/*.pkl
-keys/verification_key.json
 
-# 証明ファイル
+# 証明ファイル（一時的な証明ファイルを除外）
 proofs/*.json
 proofs/*.wtns
 
-# Circomビルド成果物
-circuits/build/
+# Circomビルド成果物（一部を除外）
 circuits/**/*.r1cs
 circuits/**/*.sym
-circuits/**/*.wasm
 circuits/**/*.wtns
 circuits/**/witness.wtns
+
+# ZKP機能に必要なファイルは含める（上記のルールより優先）
+# - keys/data_verification_0000.zkey
+# - keys/verification_key.json
+# - circuits/build/data_verification_js/*.wasm
+# - circuits/build/data_verification_js/*.js
 
 # IDE
 .vscode/
