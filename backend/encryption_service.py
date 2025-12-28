@@ -68,7 +68,8 @@ class EncryptionService:
                 ts.ckks_vector(self.context, [float(value)])
                 for value in field_data
             ]
-            encrypted_data[field] = encrypted_values
+            # CKKSVectorをバイト列にシリアライズ
+            encrypted_data[field] = [vec.serialize() for vec in encrypted_values]
 
         # 公開コンテキストを作成（秘密鍵を含まない）
         context_public = self.context.serialize()
@@ -93,7 +94,7 @@ class EncryptionService:
         Returns:
             bytes: シリアル化されたコンテキスト
         """
-        return pickle.dumps(self.context)
+        return self.context.serialize(save_secret_key=True)
 
     def get_public_context(self):
         """

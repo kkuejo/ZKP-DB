@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  base: '/ZKP-DB/provider/',
   server: {
     port: 3000,
     proxy: {

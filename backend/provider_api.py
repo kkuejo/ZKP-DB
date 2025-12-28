@@ -7,14 +7,14 @@ from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import pickle
 import tempfile
-import shutil
 from pathlib import Path
 import pandas as pd
 import tenseal as ts
 import io
 import zipfile
+import json
 
-from encryption_service import EncryptionService, ZKPService, create_data_package
+from encryption_service import EncryptionService, ZKPService
 from security_checks import SecurityChecker, PrivacyBudgetManager, log_security_event
 
 app = Flask(__name__)
@@ -26,6 +26,66 @@ budget_manager = PrivacyBudgetManager(total_budget=10.0)
 
 # 秘密鍵を保管（実際の運用ではセキュアなストレージを使用）
 secret_contexts = {}
+SECRET_CONTEXT_DIR = Path(__file__).parent / 'secret_contexts'
+SECRET_CONTEXT_DIR.mkdir(exist_ok=True)
+
+
+def _load_secret_context(provider_id: str):
+    """Load secret context from disk into memory if available."""
+    if provider_id in secret_contexts:
+        return secret_contexts[provider_id]
+
+    ctx_path = SECRET_CONTEXT_DIR / f'{provider_id}.bin'
+    if ctx_path.exists():
+        try:
+            secret_contexts[provider_id] = ts.context_from(ctx_path.read_bytes())
+            return secret_contexts[provider_id]
+        except Exception as e:
+            log_security_event(
+                'secret-context-load-failed',
+                provider_id,
+                f'Failed to load secret context: {str(e)}',
+                'ERROR'
+            )
+    return None
+
+
+def _persist_secret_context(provider_id: str, context_bytes: bytes, context_obj):
+    """Persist secret context in memory and on disk."""
+    secret_contexts[provider_id] = context_obj
+    try:
+        (SECRET_CONTEXT_DIR / f'{provider_id}.bin').write_bytes(context_bytes)
+    except Exception as e:
+        log_security_event(
+            'secret-context-save-failed',
+            provider_id,
+            f'Failed to persist secret context: {str(e)}',
+            'WARNING'
+        )
+
+
+def _generate_provider_id():
+    """Generate a provider id without colliding with stored contexts."""
+    idx = 0
+    while True:
+        candidate = f'provider_{idx}'
+        if candidate not in secret_contexts and not (SECRET_CONTEXT_DIR / f'{candidate}.bin').exists():
+            return candidate
+        idx += 1
+
+
+# 既存の秘密鍵コンテキストを事前ロード（サーバー再起動対策）
+for ctx_file in SECRET_CONTEXT_DIR.glob('*.bin'):
+    try:
+        provider_id_from_file = ctx_file.stem
+        secret_contexts[provider_id_from_file] = ts.context_from(ctx_file.read_bytes())
+    except Exception as e:
+        log_security_event(
+            'secret-context-preload-failed',
+            ctx_file.name,
+            f'Failed to preload secret context: {str(e)}',
+            'WARNING'
+        )
 
 
 @app.route('/api/health', methods=['GET'])
@@ -61,9 +121,19 @@ def encrypt_data():
         if file.filename == '':
             return jsonify({'error': 'No file selected'}), 400
 
-        # CSVを読み込み
-        csv_content = file.read().decode('utf-8')
-        df = pd.read_csv(io.StringIO(csv_content))
+        # CSVを読み込み（エンコーディング自動検出）
+        csv_bytes = file.read()
+
+        # 複数のエンコーディングを試行
+        for encoding in ['utf-8', 'shift-jis', 'cp932', 'latin1']:
+            try:
+                csv_content = csv_bytes.decode(encoding)
+                df = pd.read_csv(io.StringIO(csv_content))
+                break
+            except (UnicodeDecodeError, pd.errors.ParserError):
+                if encoding == 'latin1':  # 最後のエンコーディング
+                    raise ValueError(f"Could not decode CSV file with supported encodings")
+                continue
 
         # k-匿名性チェック
         if len(df) < 100:
@@ -103,8 +173,9 @@ def encrypt_data():
             }), 400
 
         # 秘密鍵を保存（provider_idで管理）
-        provider_id = f"provider_{len(secret_contexts)}"
-        secret_contexts[provider_id] = encryption_service.context
+        provider_id = _generate_provider_id()
+        secret_context_bytes = encryption_service.serialize_context_for_storage()
+        _persist_secret_context(provider_id, secret_context_bytes, encryption_service.context)
 
         # ZIPファイルを作成
         zip_buffer = io.BytesIO()
@@ -190,18 +261,61 @@ def decrypt_result():
         }
     """
     try:
-        data = request.get_json()
+        metadata = None
+        encrypted_result_hex = None
+        provider_id = None
+        purchaser_id = None
+
+        # JSON or multipart両対応
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            purchaser_id = request.form.get('purchaser_id')
+            provider_id = request.form.get('provider_id')
+            encrypted_result_hex = request.form.get('encrypted_result')
+
+            # ファイルで暗号化結果が送られてきた場合
+            if not encrypted_result_hex and 'encrypted_result_file' in request.files:
+                encrypted_result_hex = request.files['encrypted_result_file'].read().decode()
+
+            # metadataがJSON文字列として送られる場合
+            if request.form.get('metadata'):
+                metadata = json.loads(request.form.get('metadata'))
+
+            # encrypted_package.zipが送られてきた場合はメタデータを抽出
+            if 'encrypted_package' in request.files:
+                package_file = request.files['encrypted_package']
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    temp_path = Path(temp_dir)
+                    zip_path = temp_path / 'package.zip'
+                    package_file.save(zip_path)
+
+                    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                        zip_ref.extractall(temp_path)
+
+                    metadata_path = temp_path / 'metadata.json'
+                    if metadata_path.exists():
+                        with open(metadata_path, 'r') as f:
+                            metadata = json.load(f)
+                            provider_id = provider_id or metadata.get('provider_id')
+        else:
+            data = request.get_json()
+            if not data:
+                return jsonify({'error': 'Invalid request body'}), 400
+
+            provider_id = data.get('provider_id')
+            purchaser_id = data.get('purchaser_id')
+            encrypted_result_hex = data.get('encrypted_result')
+            metadata = data.get('metadata')
 
         # 必須フィールドのチェック
-        required_fields = ['provider_id', 'purchaser_id', 'encrypted_result', 'metadata']
-        for field in required_fields:
-            if field not in data:
+        required_fields = {
+            'provider_id': provider_id,
+            'purchaser_id': purchaser_id,
+            'encrypted_result': encrypted_result_hex,
+            'metadata': metadata
+        }
+        for field, value in required_fields.items():
+            if value is None:
                 return jsonify({'error': f'Missing required field: {field}'}), 400
-
-        provider_id = data['provider_id']
-        purchaser_id = data['purchaser_id']
-        encrypted_result_hex = data['encrypted_result']
-        metadata = data['metadata']
 
         # === セキュリティチェック開始 ===
 
@@ -294,22 +408,30 @@ def decrypt_result():
         # === セキュリティチェック完了 ===
 
         # 秘密鍵を取得
-        if provider_id not in secret_contexts:
-            return jsonify({'error': 'Invalid provider_id'}), 404
+        context = _load_secret_context(provider_id)
+        if not context:
+            return jsonify({
+                'error': 'Secret key not available for this provider',
+                'message': 'Data provider needs to keep the private key online for decryption.'
+            }), 404
 
-        context = secret_contexts[provider_id]
+        encrypted_result_hex = encrypted_result_hex.strip()
 
         # 暗号化された結果をデコード
         encrypted_result_bytes = bytes.fromhex(encrypted_result_hex)
-        encrypted_result = pickle.loads(encrypted_result_bytes)
 
-        # 復号
-        if isinstance(encrypted_result, list):
-            # リストの場合
-            decrypted_result = [item.decrypt()[0] for item in encrypted_result]
-        else:
-            # 単一値の場合
-            decrypted_result = encrypted_result.decrypt()
+        # バイト列からCKKSVectorを復元
+        try:
+            encrypted_vector = ts.ckks_vector_from(context, encrypted_result_bytes)
+            # 復号
+            decrypted_result = encrypted_vector.decrypt()
+        except Exception as e:
+            # pickleでシリアライズされている場合（レガシー対応）
+            encrypted_result = pickle.loads(encrypted_result_bytes)
+            if isinstance(encrypted_result, list):
+                decrypted_result = [item.decrypt()[0] for item in encrypted_result]
+            else:
+                decrypted_result = encrypted_result.decrypt()
 
         # バジェット消費
         budget_manager.consume_budget(purchaser_id, epsilon)
@@ -336,10 +458,130 @@ def decrypt_result():
     except Exception as e:
         log_security_event(
             'decryption-error',
-            data.get('purchaser_id', 'unknown'),
+            purchaser_id or 'unknown',
             f'Error during decryption: {str(e)}',
             'ERROR'
         )
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/compute', methods=['POST'])
+def compute_homomorphic():
+    """
+    暗号化されたデータに対して準同型演算を実行
+
+    Request (multipart/form-data):
+        - encrypted_package: ZIPファイル（暗号化パッケージ）
+        - operation: 統計計算の種類 (mean, sum, std, variance, count, min, max)
+        - field: 計算対象のフィールド名
+
+    Response JSON:
+        {
+            "encrypted_result": "hex string",
+            "metadata": {...},
+            "provider_id": "provider_0"
+        }
+    """
+    try:
+        # ファイルとパラメータを取得
+        if 'encrypted_package' not in request.files:
+            return jsonify({'error': 'No encrypted package provided'}), 400
+
+        package_file = request.files['encrypted_package']
+        operation = request.form.get('operation', 'mean')
+        field = request.form.get('field', 'age')
+
+        # ZIPファイルを一時ディレクトリに解凍
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            zip_path = temp_path / 'package.zip'
+
+            # ZIPファイルを保存
+            package_file.save(zip_path)
+
+            # 解凍
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(temp_path)
+
+            # 暗号化データと公開コンテキストを読み込み
+            with open(temp_path / 'encrypted_data.pkl', 'rb') as f:
+                encrypted_data = pickle.load(f)
+
+            with open(temp_path / 'public_context.pkl', 'rb') as f:
+                context_bytes = f.read()
+                context = ts.context_from(context_bytes)
+
+            # メタデータを読み込み
+            with open(temp_path / 'metadata.json', 'r') as f:
+                metadata = json.load(f)
+                provider_id = metadata.get('provider_id', 'unknown')
+
+            # 秘密鍵がサーバーに存在するか確認
+            if not _load_secret_context(provider_id):
+                return jsonify({
+                    'error': 'Secret key not available on provider server',
+                    'message': 'Please ensure the provider keeps the private key online before computing.'
+                }), 400
+
+            # 指定されたフィールドのデータを取得
+            if field not in encrypted_data:
+                return jsonify({'error': f'Field {field} not found in encrypted data'}), 400
+
+            field_data_bytes = encrypted_data[field]
+
+            # バイト列からCKKSVectorに変換
+            encrypted_vectors = [
+                ts.ckks_vector_from(context, vec_bytes)
+                for vec_bytes in field_data_bytes
+            ]
+
+            sample_size = len(encrypted_vectors)
+
+            # 準同型演算を実行
+            if operation == 'mean':
+                # 平均 = 合計 / 個数
+                total = encrypted_vectors[0]
+                for vec in encrypted_vectors[1:]:
+                    total = total + vec
+                result = total * (1.0 / sample_size)
+
+            elif operation == 'sum':
+                # 合計
+                result = encrypted_vectors[0]
+                for vec in encrypted_vectors[1:]:
+                    result = result + vec
+
+            elif operation == 'count':
+                # 個数（暗号化されたスカラー値として返す）
+                result = ts.ckks_vector(context, [float(sample_size)])
+
+            elif operation in ['std', 'variance', 'min', 'max']:
+                # これらの演算は準同型暗号では直接計算が困難
+                # 近似的な実装または代替手段が必要
+                return jsonify({
+                    'error': f'Operation {operation} requires decryption',
+                    'suggestion': 'Use Python script for advanced operations'
+                }), 400
+
+            else:
+                return jsonify({'error': f'Unsupported operation: {operation}'}), 400
+
+            # 結果を16進数でシリアライズ
+            encrypted_result_hex = result.serialize().hex()
+
+            return jsonify({
+                'encrypted_result': encrypted_result_hex,
+                'metadata': {
+                    'operation': operation,
+                    'field': field,
+                    'sample_size': sample_size,
+                    'filters': {}
+                },
+                'provider_id': provider_id,
+                'message': f'Computed {operation} on {field} (encrypted)'
+            })
+
+    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 

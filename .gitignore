@@ -17,6 +17,13 @@ npm-debug.log
 yarn-error.log
 package-lock.json
 
+# Large / generated artifacts (do not commit)
+encrypted_package.zip
+
+# Secrets / env files
+**/.env.production
+backend/secret_contexts/*.bin
+
 # データファイル
 data/*.json
 data/*.csv

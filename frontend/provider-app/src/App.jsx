@@ -4,9 +4,11 @@ import './App.css'
 
 function App() {
   const [file, setFile] = useState(null)
+  const [dragActive, setDragActive] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
+  const apiBase = import.meta.env.VITE_API_BASE || '/api'
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0]
@@ -17,6 +19,32 @@ function App() {
     } else {
       setError('CSVファイルを選択してください')
       setFile(null)
+    }
+  }
+
+  const handleDragOver = (e) => {
+    e.preventDefault()
+    setDragActive(true)
+  }
+
+  const handleDragLeave = (e) => {
+    e.preventDefault()
+    setDragActive(false)
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    setDragActive(false)
+    const droppedFile = e.dataTransfer.files?.[0]
+    if (droppedFile) {
+      if (droppedFile.name.endsWith('.csv')) {
+        setFile(droppedFile)
+        setError(null)
+        setSuccess(null)
+      } else {
+        setError('CSVファイルをドロップしてください')
+        setFile(null)
+      }
     }
   }
 
@@ -36,7 +64,7 @@ function App() {
       const formData = new FormData()
       formData.append('file', file)
 
-      const response = await axios.post('/api/encrypt', formData, {
+      const response = await axios.post(`${apiBase}/encrypt`, formData, {
         responseType: 'blob',
         headers: {
           'Content-Type': 'multipart/form-data'
@@ -94,10 +122,15 @@ function App() {
           </p>
 
           <form onSubmit={handleSubmit}>
-            <div className="form-group">
+            <div
+              className={`form-group drop-zone ${dragActive ? 'drag-active' : ''}`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
               <label htmlFor="file-upload" className="file-label">
                 <span className="file-icon">📁</span>
-                <span>{file ? file.name : 'CSVファイルを選択'}</span>
+                <span>{file ? file.name : 'CSVファイルを選択またはドラッグ＆ドロップ'}</span>
               </label>
               <input
                 id="file-upload"
@@ -106,6 +139,7 @@ function App() {
                 onChange={handleFileChange}
                 disabled={loading}
               />
+              <p className="hint">ドラッグ＆ドロップでもアップロードできます</p>
             </div>
 
             {file && (
@@ -152,9 +186,17 @@ function App() {
             <li>✅ 準同型暗号: 暗号化されたまま統計計算可能</li>
           </ul>
 
+          <h3>🔍 ZKPで検証している条件</h3>
+          <ul>
+            <li>年齢などの数値が事前に決めた範囲内であること</li>
+            <li>血圧・血糖などの項目が不正な桁数/形式でないこと</li>
+            <li>入力全体のハッシュ値が証明に含まれ、改ざんされていないこと</li>
+            <li>検証鍵 (verification_key.json) で第三者が同じ検証を再現可能であること</li>
+          </ul>
+
           <div className="warning">
             <strong>⚠️ 重要:</strong>
-            <p>秘密鍵は自動的に保存されます。購入者からの復号リクエストに必要です。</p>
+            <p>秘密鍵はサーバー側でのみ保持され、販売パッケージには含まれません。復号はAPI経由で処理されます。</p>
           </div>
         </div>
       </main>

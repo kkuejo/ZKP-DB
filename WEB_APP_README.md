@@ -167,14 +167,140 @@ npm run dev
 2. 「証明書を検証」ボタンをクリック
 3. データの正当性が確認されます
 
-#### 2. 計算結果の復号
+#### 2. 暗号化されたまま統計計算（フロントエンド）
+
+**最も簡単な方法**: フロントエンドから直接計算を実行
+
+1. **暗号化パッケージをアップロード**
+   - `encrypted_package.zip` を選択
+
+2. **統計計算を選択**
+   - 平均 (mean), 合計 (sum), カウント (count) から選択
+
+3. **対象フィールドを選択**
+   - age, blood_pressure_systolic, blood_sugar など
+
+4. **Purchaser ID を入力**
+   - 例: `pharma_company_123`
+
+5. **「暗号化されたまま計算実行」をクリック**
+   - 自動的に準同型演算が実行され、結果が復号されて表示されます
+
+**処理の流れ:**
+```
+暗号化データ → 準同型演算 → 暗号化された結果 → 自動復号 → 表示
+```
+
+## デプロイ: GitHub Pages + Render
+
+### バックエンド (Render)
+- `render.yaml` を使って Render の Web Service としてデプロイできます。
+- ビルド: `pip install -r backend/requirements.txt`
+- 起動: `cd backend && gunicorn provider_api:app --bind 0.0.0.0:$PORT`
+- デプロイ後のAPIベースURL例: `https://zkp-db.onrender.com/api`（実際のURLに読み替え）
+
+### フロントエンド (GitHub Pages)
+- Viteの`base`は `/ZKP-DB/provider/` と `/ZKP-DB/purchaser/` に設定済み。
+- ビルド:
+  - `npm --prefix frontend/provider-app run build`
+  - `npm --prefix frontend/purchaser-app run build`
+- Pages 用に、`frontend/provider-app/dist` → `provider/`、`frontend/purchaser-app/dist` → `purchaser/` として `gh-pages` ブランチに配置。
+- フロントからバックエンドを呼ぶときは環境変数 `VITE_API_BASE` で Render の URL を指定（例: `https://zkp-db.onrender.com/api`）。
+
+#### 3. Pythonスクリプトで独自計算（高度な分析）
+
+フロントエンドで対応していない複雑な計算が必要な場合:
+
+**利用可能な計算:**
+- 平均 (mean)
+- 合計 (sum)
+- 分散 (variance) - 近似
+- 重み付き合計 (weighted_sum)
+- 相関 (correlation) - 2フィールド間
+
+**使い方:**
+
+```bash
+# 1. 暗号化パッケージをダウンロード
+# （データ提供者から受け取ったencrypted_package.zip）
+
+# 2. Pythonスクリプトを実行
+python purchaser_compute.py encrypted_package.zip
+
+# 3. 対話的に計算を選択
+# - 計算の種類を選択 (1-5)
+# - 対象フィールドを選択
+# - 重みや2つ目のフィールドを入力（必要に応じて）
+
+# 4. 出力された16進数をコピー
+# 例: 03a9f1b2c3d4e5f6...
+
+# 5. フロントエンドの「計算結果の復号（手動）」セクションで復号
+# - Provider ID, Purchaser ID を入力
+# - 操作、フィールド、サンプルサイズを入力
+# - 16進数を貼り付けて復号リクエストを送信
+```
+
+**例: 分散を計算**
+
+```bash
+$ python purchaser_compute.py encrypted_package.zip
+
+============================================================
+ZKP-DB 購入者用準同型演算スクリプト
+============================================================
+
+[1/4] 暗号化パッケージを読み込んでいます: encrypted_package.zip
+✓ Provider ID: provider_0
+✓ 利用可能なフィールド: ['age', 'blood_pressure_systolic', ...]
+✓ サンプル数: 100
+
+[2/4] 実行する計算を選択してください:
+  1. 平均 (mean)
+  2. 合計 (sum)
+  3. 分散 (variance) - 近似
+  4. 重み付き合計 (weighted_sum)
+  5. 相関 (correlation) - 2つのフィールド間
+
+選択 (1-5): 3
+
+[3/4] 対象フィールドを選択してください:
+  1. age
+  2. blood_pressure_systolic
+  ...
+
+選択 (1-6): 1
+
+[4/4] 計算を実行しています...
+✓ 暗号化されたまま分散を計算しました（近似）
+
+============================================================
+計算完了！
+============================================================
+
+以下の情報をフロントエンドの「計算結果の復号（手動）」セクションに入力してください:
+
+Provider ID: provider_0
+操作: variance
+フィールド: age
+サンプルサイズ: 100
+
+暗号化された結果（16進数）:
+------------------------------------------------------------
+03a9f1b2c3d4e5f6780123456789abcdef...
+------------------------------------------------------------
+```
+
+#### 4. 計算結果の復号（手動）
+
+Pythonスクリプトで計算した暗号化結果を復号する場合:
 
 1. **Provider ID** を入力 (例: `provider_0`)
 2. **Purchaser ID** を入力 (例: `pharma_company_123`)
-3. **操作** を選択 (mean, sum, std, count)
+3. **操作** を選択 (mean, sum, variance, count など)
 4. **フィールド** を入力 (例: `age`)
 5. **サンプルサイズ** を入力 (最低100)
-6. **暗号化された結果** (16進数) を入力
+6. **暗号化された結果** (16進数) を貼り付け
 7. 「復号リクエストを送信」ボタンをクリック
 
 ## セキュリティ機能
@@ -271,6 +397,35 @@ npm run dev
   "status": "success"
 }
 ```
+
+#### POST /api/compute
+暗号化されたデータに対して準同型演算を実行
+
+**Request:**
+- `multipart/form-data`
+- `encrypted_package`: ZIPファイル（暗号化パッケージ）
+- `operation`: 統計計算の種類 (mean, sum, count)
+- `field`: 計算対象のフィールド名
+
+**Response:**
+```json
+{
+  "encrypted_result": "hex string",
+  "metadata": {
+    "operation": "mean",
+    "field": "age",
+    "sample_size": 100,
+    "filters": {}
+  },
+  "provider_id": "provider_0",
+  "message": "Computed mean on age (encrypted)"
+}
+```
+
+**注意:**
+- 結果は暗号化されたまま返されます
+- `/api/decrypt` エンドポイントで復号してください
+- std, variance, min, max は準同型暗号では直接計算が困難なため、Pythonスクリプトを使用してください
 
 #### POST /api/verify-proof
 ZKP証明を検証

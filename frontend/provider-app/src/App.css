@@ -49,6 +49,26 @@ main {
   margin-bottom: 1.5rem;
 }
 
+.drop-zone {
+  border: 2px dashed #e0e0e0;
+  border-radius: 10px;
+  padding: 1rem;
+  text-align: center;
+  background: #fafafa;
+  transition: border-color 0.2s, background 0.2s;
+}
+
+.drop-zone.drag-active {
+  border-color: #f5576c;
+  background: #fff5f7;
+}
+
+.hint {
+  margin-top: 0.5rem;
+  color: #777;
+  font-size: 0.9rem;
+}
+
 input[type="file"] {
   display: none;
 }

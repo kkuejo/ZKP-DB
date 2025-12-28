@@ -104,6 +104,28 @@ main {
   cursor: not-allowed;
 }
 
+.secondary-btn {
+  margin-bottom: 0.8rem;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  border: 1px solid #f5576c;
+  background: #fff;
+  color: #f5576c;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+}
+
+.secondary-btn:hover:not(:disabled) {
+  background: #fff5f7;
+  box-shadow: 0 4px 12px rgba(245, 87, 108, 0.2);
+}
+
+.secondary-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .message {
   margin-top: 1.5rem;
   padding: 1rem;
@@ -175,4 +197,84 @@ main {
 .warning p {
   margin: 0;
   color: #666;
+}
+
+.result-details {
+  margin-top: 1rem;
+}
+
+.result-details p {
+  margin: 0.5rem 0;
+  font-family: monospace;
+}
+
+.file-info {
+  margin-top: 0.5rem;
+  color: #666;
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.info-box {
+  margin-top: 1.5rem;
+  background: #f0f8ff;
+  border-left: 4px solid #4a90e2;
+  padding: 1rem;
+  border-radius: 4px;
+}
+
+.info-box p {
+  margin: 0.5rem 0;
+  color: #555;
+}
+
+.info-box strong {
+  color: #4a90e2;
+}
+
+.tab-header {
+  display: inline-flex;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  background: #f7f7f7;
+  padding: 0.4rem;
+  border-radius: 8px;
+}
+
+.tab {
+  border: none;
+  background: transparent;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #555;
+  transition: background 0.2s, color 0.2s;
+}
+
+.tab.active {
+  background: #f5576c;
+  color: #fff;
+  box-shadow: 0 6px 18px rgba(245, 87, 108, 0.2);
+}
+
+.tab:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.python-guide .code-block {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 1rem;
+  border-radius: 8px;
+  overflow-x: auto;
+  line-height: 1.5;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.highlight-red {
+  color: #d32f2f;
+  font-weight: 700;
 }
