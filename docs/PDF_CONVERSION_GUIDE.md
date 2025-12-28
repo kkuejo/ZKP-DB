@@ -118,9 +118,14 @@ npm install -g md-to-pdf
 
 ### 問題: 日本語が文字化け
 
+**原因（よくある）**:
+
+- WSL / Linux 環境に **日本語フォントが入っていない**（Chromiumが日本語グリフを描けず文字化け/□になる）
+- Markdownファイルが UTF-8 ではない
+
 **解決策**:
 
-Markdownファイルが UTF-8 エンコーディングであることを確認してください。
+まず Markdown ファイルが UTF-8 エンコーディングであることを確認してください。
 
 ```bash
 # ファイルのエンコーディング確認
@@ -128,6 +133,27 @@ file -i docs/ZKP-DB_Explain.md
 
 # UTF-8であることを確認
 # 出力例: docs/ZKP-DB_Explain.md: text/plain; charset=utf-8
+```
+
+次に、日本語フォントを用意してください（どちらか一方でOK）:
+
+**(A) 推奨: 付属スクリプトでローカルにフォントを用意（sudo不要）**
+
+```bash
+bash scripts/ensure_pdf_fonts.sh
+```
+
+**(B) システムにインストール（Ubuntu/WSL）**
+
+```bash
+sudo apt-get update
+sudo apt-get install -y fonts-noto-cjk
+```
+
+確認（Notoが返ればOK）:
+
+```bash
+fc-match 'Noto Sans JP'
 ```
 
 ### 問題: CSSが適用されない

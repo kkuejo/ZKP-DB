@@ -57,3 +57,6 @@ Thumbs.db
 # 一時ファイル
 tmp/
 temp/
+
+# PDF生成用のローカルフォント（自動ダウンロード）
+scripts/fonts/

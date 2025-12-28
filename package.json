@@ -27,7 +27,6 @@
     "circomlib": "^2.0.5"
   },
   "devDependencies": {
-    "circom": "^2.1.6",
     "md-to-pdf": "^5.2.4"
   }
 }

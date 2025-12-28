@@ -1,12 +1,27 @@
 /* PDF出力用のスタイルシート */
 
+/* 日本語フォント（ローカルにある場合はそれを優先して埋め込み） */
+@font-face {
+  font-family: 'ZKPDB Noto Sans JP';
+  src: url('/scripts/fonts/NotoSansCJKjp-Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'ZKPDB Noto Sans JP';
+  src: url('/scripts/fonts/NotoSansCJKjp-Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+}
+
 @page {
   margin: 20mm;
   size: A4;
 }
 
 body {
-  font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic ProN', 'メイリオ', Meiryo, sans-serif;
+  font-family: 'ZKPDB Noto Sans JP', 'Noto Sans JP', 'Noto Sans CJK JP', 'Hiragino Kaku Gothic ProN', 'メイリオ', Meiryo, sans-serif;
   font-size: 11pt;
   line-height: 1.6;
   color: #333;
@@ -60,7 +75,8 @@ pre {
   padding: 10pt;
   margin: 10pt 0;
   overflow-x: auto;
-  font-family: 'Courier New', Consolas, monospace;
+  /* 日本語が含まれるコードブロックで文字化けしないよう、末尾に日本語フォントをフォールバック */
+  font-family: 'Courier New', Consolas, monospace, 'ZKPDB Noto Sans JP', 'Noto Sans JP', 'Noto Sans CJK JP', 'メイリオ', Meiryo, sans-serif;
   font-size: 9pt;
   line-height: 1.4;
   page-break-inside: avoid;
@@ -70,7 +86,8 @@ code {
   background-color: #f8f9fa;
   padding: 2pt 4pt;
   border-radius: 3px;
-  font-family: 'Courier New', Consolas, monospace;
+  /* インラインコードも同様に日本語フォントへフォールバック */
+  font-family: 'Courier New', Consolas, monospace, 'ZKPDB Noto Sans JP', 'Noto Sans JP', 'Noto Sans CJK JP', 'メイリオ', Meiryo, sans-serif;
   font-size: 10pt;
   color: #e74c3c;
 }

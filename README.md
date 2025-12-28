@@ -580,6 +580,15 @@ MarkdownドキュメントをPDFに変換できます。
 npm install
 ```
 
+### WSL / Linux で日本語が文字化けする場合
+
+`md-to-pdf`（内部でChromium使用）は環境に日本語フォントが無いと文字化けします。
+以下を実行してローカルにフォントを用意してください（sudo不要）:
+
+```bash
+bash scripts/ensure_pdf_fonts.sh
+```
+
 ### 使い方
 
 **すべてのドキュメントを一括変換**:
