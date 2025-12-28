@@ -13,20 +13,33 @@ import pandas as pd
 import numpy as np
 
 
+_GLOBAL_CONTEXT = None
+
+
+def _get_shared_context():
+    """
+    超軽量パラメータで生成したCKKSコンテキストを使い回す。
+    Render無料枠（512MB RAM制限）向けに最適化。
+    """
+    global _GLOBAL_CONTEXT
+    if _GLOBAL_CONTEXT is None:
+        ctx = ts.context(
+            ts.SCHEME_TYPE.CKKS,
+            poly_modulus_degree=2048,  # 4096→2048に軽量化（メモリ削減）
+            coeff_mod_bit_sizes=[30, 20]  # ビットサイズも削減
+        )
+        # 加算とスカラー倍のみなのでGalois/Relinキーは生成しない（負荷軽減）
+        ctx.global_scale = 2**15
+        _GLOBAL_CONTEXT = ctx
+    return _GLOBAL_CONTEXT
+
+
 class EncryptionService:
     """準同型暗号による暗号化サービス"""
 
     def __init__(self):
-        """CKKS暗号化コンテキストを初期化"""
-        # CKKS方式のコンテキスト作成
-        self.context = ts.context(
-            ts.SCHEME_TYPE.CKKS,
-            poly_modulus_degree=8192,
-            coeff_mod_bit_sizes=[60, 40, 40, 60]
-        )
-        self.context.generate_galois_keys()
-        self.context.generate_relin_keys()
-        self.context.global_scale = 2**40
+        """CKKS暗号化コンテキストを取得（共有）"""
+        self.context = _get_shared_context()
 
     def encrypt_patient_data(self, csv_data):
         """
@@ -83,7 +96,7 @@ class EncryptionService:
                 'total_records': len(df),
                 'numeric_fields': numeric_fields,
                 'encryption_scheme': 'CKKS',
-                'poly_modulus_degree': 8192
+                'poly_modulus_degree': 2048
             }
         }
 
