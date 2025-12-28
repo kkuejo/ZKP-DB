@@ -47,77 +47,91 @@
 - **Poseidon**: 暗号学的ハッシュ関数
 
 ### その他
-- **Python**: データ処理、暗号化、統計分析
-- **Node.js**: Circom回路のコンパイルと証明生成
+- **Python (Flask)**: バックエンドAPI（暗号化/復号/計算）
+- **Node.js (Vite + React)**: データ提供者/購入者フロントエンド
 - **NumPy, Pandas**: データ分析
 
 ## ディレクトリ構成
 
 ```
 ZKP-DB/
-├── circuits/           # Circom ZKP回路
-│   └── data_verification.circom
-├── python/            # Pythonスクリプト
-│   ├── generate_dummy_data.py
-│   ├── homomorphic_encryption.py
-│   └── integrated_demo.py
-├── scripts/           # JavaScriptスクリプト
-│   ├── setup.js
-│   ├── generate_proof.js
-│   └── verify_proof.js
-├── data/              # 生成されるデータ
-├── keys/              # 暗号鍵とZKP鍵
-├── proofs/            # 生成される証明
-├── requirements.txt   # Python依存関係
-├── package.json       # Node.js依存関係
-└── README.md
+├── backend/             # Flask API（/api/encrypt, /api/decrypt, /api/compute など）
+├── frontend/
+│   ├── provider-app/    # データ提供者フロント（Vite+React）
+│   └── purchaser-app/   # データ購入者フロント（Vite+React）
+├── circuits/            # Circom ZKP回路
+├── scripts/             # Circom/snarkjs 補助スクリプト
+├── docs/                # 説明資料
+├── render.yaml          # Render 用デプロイ設定
+├── scripts/prepare-gh-pages.sh # GitHub Pages 用ビルドコピー
+└── gh-pages/            # Pages 配信用ビルド成果物（生成物）
 ```
 
-## セットアップ
+## デプロイ
 
-### 前提条件
+### 本番環境
 
-- **Node.js** (v16以上)
-- **Python** (3.8以上)
-- **npm**
+#### バックエンド（Render）
+- **URL**: https://zkp-db.onrender.com
+- **デプロイ方法**: `render.yaml`を使用して自動デプロイ
+- **詳細**: [RENDER_DEPLOY.md](./RENDER_DEPLOY.md)
 
-### インストール手順
+#### フロントエンド（GitHub Pages）
+- **Provider App**: https://kkuejo.github.io/ZKP-DB/provider/
+- **Purchaser App**: https://kkuejo.github.io/ZKP-DB/purchaser/
+- **デプロイ方法**: `scripts/prepare-gh-pages.sh`でビルドし、gh-pagesブランチにプッシュ
 
-#### 1. Node.jsの依存関係をインストール
+### ローカル環境
+
+#### 方法1: Docker Compose（推奨・最も簡単）
 
 ```bash
-npm install
+# バックエンドを起動
+docker-compose up -d
+
+# ログを確認
+docker-compose logs -f backend
+
+# ヘルスチェック
+curl http://localhost:8080/api/health
 ```
 
-これにより、以下がインストールされます：
-- circom
-- snarkjs
-- circomlib
+**詳細**: [LOCAL_DEPLOY.md](./LOCAL_DEPLOY.md)
 
-#### 2. Pythonの依存関係をインストール
+#### 方法2: Pythonで直接実行
 
+**前提条件**:
+- Python 3.11+
+- Node.js 18+ / npm
+- snarkjs (`npm install -g snarkjs`)
+
+**バックエンド**:
 ```bash
+cd backend
+python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+python provider_api.py  # 開発モード
+# または
+gunicorn provider_api:app --bind 0.0.0.0:8080
 ```
 
-主な依存パッケージ：
-- tenseal (準同型暗号)
-- numpy, pandas (データ処理)
-- scikit-learn (機械学習)
-- faker (ダミーデータ生成)
-
-#### 3. Circom回路のセットアップ
-
+**フロントエンド**:
 ```bash
-npm run setup
+# Provider App
+cd frontend/provider-app
+npm install
+npm run dev  # http://localhost:5173
+
+# Purchaser App
+cd frontend/purchaser-app
+npm install
+npm run dev  # http://localhost:5174
 ```
 
-このコマンドは以下を実行します：
-1. Circom回路のコンパイル
-2. Powers of Tau セレモニー
-3. 証明鍵と検証鍵の生成
-
-**注意**: 初回のセットアップには数分かかります。
+### 補足
+- 秘密鍵はバックエンドのみで保持し、暗号化パッケージには含めません
+- 復号は常に `/api/decrypt` 経由で行います
+- ローカル環境では`http://localhost:8080`、本番環境では`https://zkp-db.onrender.com`を使用
 
 ## 使い方
 

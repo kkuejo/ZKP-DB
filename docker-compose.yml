@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  # Backend API service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PORT=8080
+    volumes:
+      # Mount backend code for hot-reload during development
+      - ./backend:/app/backend
+      # Persist secret contexts across container restarts
+      - backend-secrets:/app/backend/secret_contexts
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    restart: unless-stopped
+
+  # Frontend development server (optional)
+  # Uncomment if you want to run frontend locally
+  # provider-frontend:
+  #   working_dir: /app
+  #   image: node:18-slim
+  #   command: npm run dev
+  #   volumes:
+  #     - ./frontend/provider-app:/app
+  #   ports:
+  #     - "5173:5173"
+  #   environment:
+  #     - VITE_API_BASE=http://localhost:8080/api
+
+  # purchaser-frontend:
+  #   working_dir: /app
+  #   image: node:18-slim
+  #   command: npm run dev
+  #   volumes:
+  #     - ./frontend/purchaser-app:/app
+  #   ports:
+  #     - "5174:5173"
+  #   environment:
+  #     - VITE_API_BASE=http://localhost:8080/api
+
+volumes:
+  backend-secrets:
+    driver: local
