@@ -9,7 +9,8 @@
 5. [数学的背景](#数学的背景)
 6. [証明生成と検証の仕組み](#証明生成と検証の仕組み)
 7. [本システムでの利用](#本システムでの利用)
-8. [具体例と実践](#具体例と実践)
+8. [Merkle Tree（マークルツリー）](#merkle-treeマークルツリー)
+9. [具体例と実践](#具体例と実践)
 
 ---
 
@@ -698,6 +699,298 @@ if (verified) {
 - 証明からは `age`, `blood_pressure` などの値は**一切分からない**
 - `dataHash` は暗号学的ハッシュなので、逆算不可能
 - `isValid = 1` なら、データが正当な範囲内であることだけが分かる
+
+---
+
+## Merkle Tree（マークルツリー）
+
+### Merkle Treeとは
+
+Merkle Tree（マークルツリー）は、データの集合を効率的に検証するためのハッシュベースのデータ構造です。1979年にRalph Merkleによって発明され、現在ではブロックチェーン、Git、P2Pファイル共有など多くのシステムで使用されています。
+
+**核心的なアイデア**: 大量のデータの整合性を、たった1つのハッシュ値（Merkle Root）で表現する。
+
+### 構造
+
+```
+                     Merkle Root
+                         H(H01 + H23)
+                        /           \
+                   H01                H23
+               H(H0 + H1)          H(H2 + H3)
+               /       \          /       \
+             H0         H1       H2        H3
+           H(D0)      H(D1)    H(D2)     H(D3)
+             |          |        |         |
+           Data0     Data1    Data2    Data3
+```
+
+**特性**:
+
+| 特性 | 値 |
+|------|------|
+| ルートハッシュサイズ | 32バイト（SHA-256） |
+| 証明サイズ | $O(\log n)$ |
+| 検証時間 | $O(\log n)$ |
+| ツリー構築時間 | $O(n)$ |
+
+### なぜMerkle TreeとZKPを組み合わせるのか
+
+#### 従来のZKPの課題
+
+```
+患者数: 10,000人
+各患者に個別ZKP証明を生成する場合:
+- 証明数: 10,000個
+- 証明サイズ: 10,000 × 200B = 2MB
+- 生成時間: 10,000 × 1秒 = 約3時間
+- 検証時間: 10,000 × 50ms = 約8分
+```
+
+#### Merkle Tree + ZKPの利点
+
+```
+患者数: 10,000人
+バッチZKP方式:
+- Merkle Root: 1個（32バイト）
+- サンプルZKP証明: 10〜100個
+- 生成時間: O(n) ハッシュ + サンプル数 × 1秒
+- 検証時間: サンプル数 × log(n) ハッシュ検証
+
+効率化: 100〜1000倍
+```
+
+### 包含証明（Inclusion Proof）
+
+Merkle Treeの強力な機能の1つは、**特定のデータがツリーに含まれていることを証明**できることです。
+
+#### 例: Data1がツリーに含まれることを証明
+
+```
+                     Merkle Root (既知)
+                         H(H01 + H23)
+                        /           \
+                   H01                H23 ← 証明に必要
+               H(H0 + H1)
+               /       \
+             H0 ← 証明に必要   H1 = H(Data1) ← 検証対象
+                               |
+                             Data1
+```
+
+**証明に必要な情報**:
+1. `H0`（兄弟ノードのハッシュ）
+2. `H23`（叔父ノードのハッシュ）
+3. 各ノードの位置（左か右か）
+
+**検証手順**:
+1. `H1 = H(Data1)` を計算
+2. `H01 = H(H0 + H1)` を計算
+3. `Root' = H(H01 + H23)` を計算
+4. `Root' == Merkle Root` を確認
+
+**サイズ**: $\log_2(n)$ 個のハッシュ
+- 1,000件: 10個 × 32B = 320B
+- 1,000,000件: 20個 × 32B = 640B
+
+### 本システムでの実装
+
+#### MerkleTree クラス
+
+```python
+import hashlib
+from typing import List, Dict, Optional
+
+class MerkleTree:
+    def __init__(self, hash_func=None):
+        """
+        Args:
+            hash_func: カスタムハッシュ関数（デフォルト: SHA-256）
+        """
+        self.hash_func = hash_func or self._sha256_hash
+        self.leaves: List[str] = []
+        self.tree: List[List[str]] = []
+        self.root: Optional[str] = None
+
+    def _sha256_hash(self, data: str) -> str:
+        """SHA-256ハッシュを計算"""
+        return hashlib.sha256(data.encode()).hexdigest()
+
+    def add_leaf_hash(self, leaf_hash: str):
+        """リーフ（葉）ハッシュを追加"""
+        self.leaves.append(leaf_hash)
+
+    def build(self) -> str:
+        """ツリーを構築してルートハッシュを返す"""
+        if not self.leaves:
+            raise ValueError("No leaves to build tree")
+
+        current_level = self.leaves[:]
+
+        # 奇数個の場合、最後の要素を複製
+        if len(current_level) % 2 == 1:
+            current_level.append(current_level[-1])
+
+        self.tree = [current_level]
+
+        # ボトムアップでツリーを構築
+        while len(current_level) > 1:
+            next_level = []
+            for i in range(0, len(current_level), 2):
+                # 2つの子ノードを結合してハッシュ
+                combined = current_level[i] + current_level[i+1]
+                next_level.append(self.hash_func(combined))
+
+            if len(next_level) > 1 and len(next_level) % 2 == 1:
+                next_level.append(next_level[-1])
+
+            self.tree.append(next_level)
+            current_level = next_level
+
+        self.root = current_level[0]
+        return self.root
+
+    def get_proof(self, index: int) -> List[Dict]:
+        """
+        指定インデックスの包含証明を生成
+
+        Args:
+            index: リーフのインデックス
+
+        Returns:
+            証明パス（兄弟ノードのハッシュと位置のリスト）
+        """
+        if not self.tree:
+            raise ValueError("Tree not built yet")
+
+        proof = []
+        current_index = index
+
+        for level in range(len(self.tree) - 1):
+            level_size = len(self.tree[level])
+            is_right = current_index % 2 == 1
+            sibling_index = current_index - 1 if is_right else current_index + 1
+
+            if sibling_index < level_size:
+                proof.append({
+                    "hash": self.tree[level][sibling_index],
+                    "position": "left" if is_right else "right"
+                })
+
+            current_index = current_index // 2
+
+        return proof
+
+    @staticmethod
+    def verify_proof(leaf_hash: str, proof: List[Dict], root: str) -> bool:
+        """
+        包含証明を検証
+
+        Args:
+            leaf_hash: 検証対象のリーフハッシュ
+            proof: 証明パス
+            root: 期待されるMerkle Root
+
+        Returns:
+            True if valid, False otherwise
+        """
+        current_hash = leaf_hash
+        hash_func = lambda x: hashlib.sha256(x.encode()).hexdigest()
+
+        for step in proof:
+            if step["position"] == "left":
+                combined = step["hash"] + current_hash
+            else:
+                combined = current_hash + step["hash"]
+            current_hash = hash_func(combined)
+
+        return current_hash == root
+```
+
+#### 使用例
+
+```python
+# 1. ツリーの構築
+tree = MerkleTree()
+
+# 患者データのハッシュを追加
+patients = [
+    {"id": "P001", "age": 45, "bp": 130},
+    {"id": "P002", "age": 52, "bp": 145},
+    {"id": "P003", "age": 38, "bp": 120},
+    {"id": "P004", "age": 61, "bp": 155}
+]
+
+for patient in patients:
+    data_str = str(sorted(patient.items()))
+    patient_hash = hashlib.sha256(data_str.encode()).hexdigest()
+    tree.add_leaf_hash(patient_hash)
+
+# ツリーを構築
+root = tree.build()
+print(f"Merkle Root: {root}")
+
+# 2. 包含証明の生成（Patient 1の証明）
+proof = tree.get_proof(1)  # index=1 は P002
+print(f"Proof for P002: {proof}")
+
+# 3. 証明の検証
+leaf_hash = hashlib.sha256(str(sorted(patients[1].items())).encode()).hexdigest()
+is_valid = MerkleTree.verify_proof(leaf_hash, proof, root)
+print(f"Verification: {'Valid' if is_valid else 'Invalid'}")
+```
+
+### ZKPとの組み合わせ
+
+Merkle TreeとZKPを組み合わせることで、以下を同時に達成できます:
+
+1. **データの完全性**: Merkle Rootが全データの整合性を保証
+2. **プライバシー保護**: 個別データの値は一切公開されない
+3. **効率性**: サンプリングによる統計的検証
+
+```
+┌─────────────────────────────────────────────────────┐
+│                 Full Dataset                         │
+│  Patient 1, Patient 2, ..., Patient 10,000          │
+└──────────────────────┬──────────────────────────────┘
+                       │
+                       ↓
+┌─────────────────────────────────────────────────────┐
+│              Merkle Tree Construction                │
+│                                                      │
+│   各患者データ → ハッシュ化 → ツリー構築              │
+│                                                      │
+└──────────────────────┬──────────────────────────────┘
+                       │
+                       ↓
+┌─────────────────────────────────────────────────────┐
+│                 Merkle Root                          │
+│            (32 bytes - 全データの要約)               │
+└──────────────────────┬──────────────────────────────┘
+                       │
+        ┌──────────────┴──────────────┐
+        │                             │
+        ↓                             ↓
+┌───────────────────┐     ┌───────────────────────────┐
+│  Merkle Proof     │     │    Sample ZKP Proofs      │
+│  (包含証明)       │     │    (ランダムサンプルの    │
+│                   │     │     Groth16証明)          │
+└───────────────────┘     └───────────────────────────┘
+```
+
+### セキュリティ分析
+
+**Merkle Treeの安全性**:
+
+1. **衝突耐性**: SHA-256のハッシュ衝突確率は $2^{-128}$ 以下
+2. **改ざん検出**: 1ビットでもデータが変わるとMerkle Rootが完全に変化
+3. **証明偽造不可能性**: 有効な証明なしにデータの包含を主張できない
+
+**ZKPとの組み合わせの安全性**:
+
+1. **完全性**: 正しいデータなら、Merkle証明もZKP証明も検証を通る
+2. **健全性**: 不正なデータでは、証明の偽造は計算量的に不可能
+3. **ゼロ知識性**: 証明からは、Merkle Rootとサンプルの有効性以外の情報は漏れない
 
 ---
 

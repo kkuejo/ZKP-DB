@@ -4,7 +4,306 @@ docsで議論したセキュリティ要件を実装
 """
 from datetime import datetime, timedelta
 from collections import defaultdict
+from enum import Enum
+from typing import Union, List, Optional, Dict
 import numpy as np
+
+
+class NoiseType(Enum):
+    """ノイズタイプの定義"""
+    LAPLACE = "laplace"
+    GAUSSIAN = "gaussian"
+
+
+class DifferentialPrivacy:
+    """
+    差分プライバシー機構
+    統計結果にノイズを付加してプライバシーを保護
+    """
+
+    def __init__(self, epsilon: float = 1.0, delta: float = 1e-5):
+        """
+        Args:
+            epsilon: プライバシーバジェット（小さいほど強いプライバシー保護）
+            delta: (ε, δ)-差分プライバシーのδパラメータ（Gaussian用）
+        """
+        self.epsilon = epsilon
+        self.delta = delta
+
+    def calculate_sensitivity(
+        self,
+        operation: str,
+        data_range: tuple,
+        sample_size: int
+    ) -> float:
+        """
+        クエリの感度（sensitivity）を計算
+        感度 = 1人のデータが変わった時の最大出力変化量
+
+        Args:
+            operation: 統計操作（mean, sum, count等）
+            data_range: データの範囲 (min, max)
+            sample_size: データサイズ
+
+        Returns:
+            float: 感度値
+        """
+        min_val, max_val = data_range
+        value_range = max_val - min_val
+
+        if operation == 'mean':
+            # 平均の感度 = 範囲 / サンプルサイズ
+            return value_range / sample_size
+
+        elif operation == 'sum':
+            # 合計の感度 = 1人が追加/削除された時の最大変化
+            return value_range
+
+        elif operation == 'count':
+            # カウントの感度 = 1
+            return 1.0
+
+        elif operation == 'variance' or operation == 'std':
+            # 分散の感度（近似）= 範囲^2 / サンプルサイズ
+            return (value_range ** 2) / sample_size
+
+        elif operation == 'min' or operation == 'max':
+            # 最小/最大の感度 = 範囲（最悪ケース）
+            return value_range
+
+        elif operation == 'median':
+            # 中央値の感度（近似）
+            return value_range / sample_size
+
+        else:
+            # 未知の操作の場合は保守的に範囲を返す
+            return value_range
+
+    def add_laplace_noise(
+        self,
+        value: Union[float, List[float], np.ndarray],
+        sensitivity: float,
+        epsilon: Optional[float] = None
+    ) -> Union[float, np.ndarray]:
+        """
+        Laplace機構によるノイズ付加
+        (ε)-差分プライバシーを保証
+
+        Args:
+            value: 元の値（スカラーまたは配列）
+            sensitivity: クエリの感度
+            epsilon: プライバシーパラメータ（Noneの場合はインスタンスの値を使用）
+
+        Returns:
+            ノイズ付加後の値
+        """
+        eps = epsilon if epsilon is not None else self.epsilon
+
+        # Laplaceノイズのスケール = 感度 / ε
+        scale = sensitivity / eps
+
+        if isinstance(value, (list, np.ndarray)):
+            value_array = np.array(value)
+            noise = np.random.laplace(loc=0, scale=scale, size=value_array.shape)
+            return value_array + noise
+        else:
+            noise = np.random.laplace(loc=0, scale=scale)
+            return value + noise
+
+    def add_gaussian_noise(
+        self,
+        value: Union[float, List[float], np.ndarray],
+        sensitivity: float,
+        epsilon: Optional[float] = None,
+        delta: Optional[float] = None
+    ) -> Union[float, np.ndarray]:
+        """
+        Gaussian機構によるノイズ付加
+        (ε, δ)-差分プライバシーを保証
+
+        Args:
+            value: 元の値（スカラーまたは配列）
+            sensitivity: クエリの感度
+            epsilon: プライバシーパラメータ
+            delta: δパラメータ
+
+        Returns:
+            ノイズ付加後の値
+        """
+        eps = epsilon if epsilon is not None else self.epsilon
+        d = delta if delta is not None else self.delta
+
+        # Gaussianノイズの標準偏差
+        # σ = sensitivity * sqrt(2 * ln(1.25/δ)) / ε
+        sigma = sensitivity * np.sqrt(2 * np.log(1.25 / d)) / eps
+
+        if isinstance(value, (list, np.ndarray)):
+            value_array = np.array(value)
+            noise = np.random.normal(loc=0, scale=sigma, size=value_array.shape)
+            return value_array + noise
+        else:
+            noise = np.random.normal(loc=0, scale=sigma)
+            return value + noise
+
+    def add_noise(
+        self,
+        value: Union[float, List[float], np.ndarray],
+        sensitivity: float,
+        noise_type: NoiseType = NoiseType.LAPLACE,
+        epsilon: Optional[float] = None,
+        delta: Optional[float] = None
+    ) -> Union[float, np.ndarray]:
+        """
+        指定されたノイズタイプでノイズを付加
+
+        Args:
+            value: 元の値
+            sensitivity: クエリの感度
+            noise_type: ノイズタイプ（LAPLACE or GAUSSIAN）
+            epsilon: プライバシーパラメータ
+            delta: δパラメータ（Gaussian用）
+
+        Returns:
+            ノイズ付加後の値
+        """
+        if noise_type == NoiseType.LAPLACE:
+            return self.add_laplace_noise(value, sensitivity, epsilon)
+        elif noise_type == NoiseType.GAUSSIAN:
+            return self.add_gaussian_noise(value, sensitivity, epsilon, delta)
+        else:
+            raise ValueError(f"Unknown noise type: {noise_type}")
+
+    def apply_to_result(
+        self,
+        result: Union[float, List[float], np.ndarray],
+        operation: str,
+        field: str,
+        sample_size: int,
+        noise_type: NoiseType = NoiseType.LAPLACE
+    ) -> Dict:
+        """
+        統計結果に差分プライバシーを適用
+
+        Args:
+            result: 元の統計結果
+            operation: 統計操作
+            field: フィールド名
+            sample_size: サンプルサイズ
+            noise_type: ノイズタイプ
+
+        Returns:
+            dict: {
+                'noisy_result': ノイズ付加後の結果,
+                'epsilon_used': 使用したε,
+                'noise_type': ノイズタイプ,
+                'sensitivity': 感度
+            }
+        """
+        # フィールドごとのデータ範囲（医療データの典型的な範囲）
+        field_ranges = {
+            'age': (0, 120),
+            'blood_pressure_systolic': (80, 200),
+            'blood_pressure_diastolic': (50, 130),
+            'blood_sugar': (50, 300),
+            'cholesterol': (100, 400),
+            'bmi': (10, 50),
+            'hospitalization_count': (0, 20),
+            # デフォルト範囲
+            'default': (0, 1000)
+        }
+
+        data_range = field_ranges.get(field, field_ranges['default'])
+
+        # 感度を計算
+        sensitivity = self.calculate_sensitivity(operation, data_range, sample_size)
+
+        # ノイズを付加
+        noisy_result = self.add_noise(
+            result,
+            sensitivity,
+            noise_type,
+            self.epsilon,
+            self.delta
+        )
+
+        return {
+            'noisy_result': noisy_result.tolist() if isinstance(noisy_result, np.ndarray)
+                           else noisy_result,
+            'original_result': result.tolist() if isinstance(result, np.ndarray)
+                              else result,
+            'epsilon_used': self.epsilon,
+            'delta_used': self.delta if noise_type == NoiseType.GAUSSIAN else None,
+            'noise_type': noise_type.value,
+            'sensitivity': sensitivity,
+            'field': field,
+            'operation': operation,
+            'sample_size': sample_size
+        }
+
+    def estimate_noise_magnitude(
+        self,
+        operation: str,
+        field: str,
+        sample_size: int,
+        noise_type: NoiseType = NoiseType.LAPLACE
+    ) -> Dict:
+        """
+        予想されるノイズの大きさを推定（クエリ前の情報提供用）
+
+        Args:
+            operation: 統計操作
+            field: フィールド名
+            sample_size: サンプルサイズ
+            noise_type: ノイズタイプ
+
+        Returns:
+            dict: ノイズの推定情報
+        """
+        field_ranges = {
+            'age': (0, 120),
+            'blood_pressure_systolic': (80, 200),
+            'blood_pressure_diastolic': (50, 130),
+            'blood_sugar': (50, 300),
+            'cholesterol': (100, 400),
+            'bmi': (10, 50),
+            'hospitalization_count': (0, 20),
+            'default': (0, 1000)
+        }
+
+        data_range = field_ranges.get(field, field_ranges['default'])
+        sensitivity = self.calculate_sensitivity(operation, data_range, sample_size)
+
+        if noise_type == NoiseType.LAPLACE:
+            scale = sensitivity / self.epsilon
+            expected_magnitude = scale  # Laplaceの期待絶対値 = scale
+            std_dev = np.sqrt(2) * scale
+        else:
+            sigma = sensitivity * np.sqrt(2 * np.log(1.25 / self.delta)) / self.epsilon
+            expected_magnitude = sigma * np.sqrt(2 / np.pi)  # 半正規分布の期待値
+            std_dev = sigma
+
+        return {
+            'sensitivity': sensitivity,
+            'expected_noise_magnitude': expected_magnitude,
+            'noise_std_dev': std_dev,
+            'noise_type': noise_type.value,
+            'epsilon': self.epsilon,
+            'recommendation': self._get_recommendation(expected_magnitude, data_range)
+        }
+
+    def _get_recommendation(self, noise_magnitude: float, data_range: tuple) -> str:
+        """ノイズの大きさに基づく推奨事項を生成"""
+        value_range = data_range[1] - data_range[0]
+        noise_ratio = noise_magnitude / value_range
+
+        if noise_ratio < 0.01:
+            return "優良: ノイズは結果に対して非常に小さく、高精度の統計が得られます"
+        elif noise_ratio < 0.05:
+            return "良好: ノイズは許容範囲内で、実用的な統計が得られます"
+        elif noise_ratio < 0.1:
+            return "注意: ノイズがやや大きめです。サンプルサイズを増やすことを推奨します"
+        else:
+            return "警告: ノイズが大きく、結果の精度が低下する可能性があります"
 
 
 class SecurityChecker:

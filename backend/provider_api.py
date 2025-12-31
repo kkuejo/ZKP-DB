@@ -14,8 +14,11 @@ import io
 import zipfile
 import json
 
-from encryption_service import EncryptionService, ZKPService
-from security_checks import SecurityChecker, PrivacyBudgetManager, log_security_event
+from encryption_service import EncryptionService, ZKPService, BatchZKPService, MerkleTree
+from security_checks import (
+    SecurityChecker, PrivacyBudgetManager, log_security_event,
+    DifferentialPrivacy, NoiseType
+)
 
 app = Flask(__name__)
 CORS(app)  # フロントエンドからのリクエストを許可
@@ -23,6 +26,8 @@ CORS(app)  # フロントエンドからのリクエストを許可
 # セキュリティコンポーネント
 security_checker = SecurityChecker()
 budget_manager = PrivacyBudgetManager(total_budget=10.0)
+# 差分プライバシー（デフォルト: ε=1.0, δ=1e-5）
+differential_privacy = DifferentialPrivacy(epsilon=1.0, delta=1e-5)
 
 # 秘密鍵を保管（実際の運用ではセキュアなストレージを使用）
 secret_contexts = {}
@@ -152,25 +157,9 @@ def encrypt_data():
         encryption_service = EncryptionService()
         encrypted_package = encryption_service.encrypt_patient_data(df)
 
-        # ZKPサービス
-        zkp_service = ZKPService()
-
-        # サンプルとして最初の患者データのZKP証明を生成
-        first_patient = df.iloc[0].to_dict()
-
-        try:
-            zkp_proof = zkp_service.generate_proof(first_patient)
-        except ValueError as e:
-            log_security_event(
-                'zkp-generation-failed',
-                'provider',
-                f'Invalid data ranges: {str(e)}',
-                'ERROR'
-            )
-            return jsonify({
-                'error': 'Invalid data',
-                'message': str(e)
-            }), 400
+        # バッチZKPオプションを取得（デフォルト: True = 全患者証明）
+        use_batch_zkp = request.form.get('use_batch_zkp', 'true').lower() == 'true'
+        zkp_sample_size = int(request.form.get('zkp_sample_size', '10'))
 
         # 秘密鍵を保存（provider_idで管理）
         provider_id = _generate_provider_id()
@@ -186,24 +175,108 @@ def encrypt_data():
             # 公開コンテキスト
             zip_file.writestr('public_context.pkl', encrypted_package['context_public'])
 
-            # ZKP証明
-            import json
-            zip_file.writestr('proof.json', json.dumps(zkp_proof['proof'], indent=2))
-            zip_file.writestr('public_signals.json',
-                            json.dumps(zkp_proof['public_signals'], indent=2))
+            if use_batch_zkp:
+                # === 全患者ZKP証明（Merkle Tree + サンプルZKP） ===
+                batch_zkp_service = BatchZKPService()
 
-            # 検証鍵
-            verification_key = zkp_service.get_verification_key()
-            zip_file.writestr('verification_key.json',
-                            json.dumps(verification_key, indent=2))
+                try:
+                    batch_proof = batch_zkp_service.generate_batch_proof(
+                        df,
+                        sample_size=zkp_sample_size
+                    )
 
-            # メタデータ
-            metadata = {
-                **encrypted_package['metadata'],
-                'data_hash': zkp_proof['data_hash'],
-                'provider_id': provider_id,
-                'package_created': pd.Timestamp.now().isoformat()
-            }
+                    # バッチ証明をZIPに追加
+                    zip_file.writestr('batch_proof.json', json.dumps({
+                        'merkle_root': batch_proof['merkle_root'],
+                        'merkle_tree_info': batch_proof['merkle_tree_info'],
+                        'coverage': batch_proof['coverage']
+                    }, indent=2))
+
+                    # サンプル証明を個別ファイルとして保存
+                    zip_file.writestr('sample_proofs.json',
+                                    json.dumps(batch_proof['sample_proofs'], indent=2))
+
+                    # 検証鍵
+                    zip_file.writestr('verification_key.json',
+                                    json.dumps(batch_proof['verification_key'], indent=2))
+
+                    # 後方互換性のため、最初のサンプル証明をproof.jsonとしても保存
+                    if batch_proof['sample_proofs'] and batch_proof['sample_proofs'][0].get('zkp_proof'):
+                        first_proof = batch_proof['sample_proofs'][0]
+                        zip_file.writestr('proof.json',
+                                        json.dumps(first_proof['zkp_proof'], indent=2))
+                        zip_file.writestr('public_signals.json',
+                                        json.dumps(first_proof['public_signals'], indent=2))
+                        data_hash = first_proof.get('data_hash', batch_proof['merkle_root'])
+                    else:
+                        data_hash = batch_proof['merkle_root']
+
+                    # メタデータ
+                    metadata = {
+                        **encrypted_package['metadata'],
+                        'data_hash': data_hash,
+                        'merkle_root': batch_proof['merkle_root'],
+                        'zkp_mode': 'batch',
+                        'zkp_coverage': batch_proof['coverage'],
+                        'provider_id': provider_id,
+                        'package_created': pd.Timestamp.now().isoformat()
+                    }
+
+                    log_security_event(
+                        'batch-zkp-generated',
+                        provider_id,
+                        f"Generated batch ZKP: {batch_proof['coverage']['successful_proofs']}/{batch_proof['coverage']['sampled_patients']} proofs",
+                        'INFO'
+                    )
+
+                except Exception as e:
+                    log_security_event(
+                        'batch-zkp-failed',
+                        provider_id,
+                        f'Batch ZKP generation failed: {str(e)}',
+                        'WARNING'
+                    )
+                    # フォールバック: 単一証明モードに切り替え
+                    use_batch_zkp = False
+
+            if not use_batch_zkp:
+                # === 単一患者ZKP証明（従来モード） ===
+                zkp_service = ZKPService()
+                first_patient = df.iloc[0].to_dict()
+
+                try:
+                    zkp_proof = zkp_service.generate_proof(first_patient)
+                except ValueError as e:
+                    log_security_event(
+                        'zkp-generation-failed',
+                        'provider',
+                        f'Invalid data ranges: {str(e)}',
+                        'ERROR'
+                    )
+                    return jsonify({
+                        'error': 'Invalid data',
+                        'message': str(e)
+                    }), 400
+
+                # ZKP証明
+                zip_file.writestr('proof.json', json.dumps(zkp_proof['proof'], indent=2))
+                zip_file.writestr('public_signals.json',
+                                json.dumps(zkp_proof['public_signals'], indent=2))
+
+                # 検証鍵
+                verification_key = zkp_service.get_verification_key()
+                zip_file.writestr('verification_key.json',
+                                json.dumps(verification_key, indent=2))
+
+                # メタデータ
+                metadata = {
+                    **encrypted_package['metadata'],
+                    'data_hash': zkp_proof['data_hash'],
+                    'zkp_mode': 'single',
+                    'provider_id': provider_id,
+                    'package_created': pd.Timestamp.now().isoformat()
+                }
+
             zip_file.writestr('metadata.json', json.dumps(metadata, indent=2))
 
         zip_buffer.seek(0)
@@ -433,8 +506,43 @@ def decrypt_result():
             else:
                 decrypted_result = encrypted_result.decrypt()
 
-        # バジェット消費
-        budget_manager.consume_budget(purchaser_id, epsilon)
+        # === 差分プライバシーの適用 ===
+        # リクエストからノイズ設定を取得（オプション）
+        noise_type_str = metadata.get('noise_type', 'laplace')
+        noise_type = NoiseType.GAUSSIAN if noise_type_str == 'gaussian' else NoiseType.LAPLACE
+
+        # カスタムεを使用する場合はバジェットから消費
+        custom_epsilon = metadata.get('epsilon')
+        if custom_epsilon:
+            dp = DifferentialPrivacy(epsilon=float(custom_epsilon), delta=differential_privacy.delta)
+        else:
+            dp = differential_privacy
+
+        # 統計結果にノイズを付加
+        operation = metadata.get('operation', 'mean')
+        field = metadata.get('field', 'unknown')
+        sample_size = metadata.get('sample_size', 100)
+
+        # 結果をリストまたはスカラーで取得
+        if isinstance(decrypted_result, (list, tuple)):
+            raw_result = decrypted_result[0] if len(decrypted_result) == 1 else decrypted_result
+        else:
+            raw_result = decrypted_result.tolist() if hasattr(decrypted_result, 'tolist') else decrypted_result
+            if isinstance(raw_result, list) and len(raw_result) == 1:
+                raw_result = raw_result[0]
+
+        # 差分プライバシーを適用
+        dp_result = dp.apply_to_result(
+            result=raw_result,
+            operation=operation,
+            field=field,
+            sample_size=sample_size,
+            noise_type=noise_type
+        )
+
+        # バジェット消費（差分プライバシーのεを使用）
+        epsilon_used = dp_result['epsilon_used']
+        budget_manager.consume_budget(purchaser_id, epsilon_used)
 
         # 残りリクエスト数
         remaining_requests = security_checker.get_remaining_requests(purchaser_id)
@@ -442,13 +550,19 @@ def decrypt_result():
         log_security_event(
             'decryption-success',
             purchaser_id,
-            f"Decrypted {metadata['operation']} on {metadata.get('field', 'unknown')}",
+            f"Decrypted {operation} on {field} with DP (ε={epsilon_used}, noise={noise_type.value})",
             'INFO'
         )
 
         return jsonify({
-            'result': decrypted_result if isinstance(decrypted_result, list)
-                     else decrypted_result.tolist(),
+            'result': dp_result['noisy_result'],
+            'original_result_hidden': True,  # 元の結果は返さない（プライバシー保護）
+            'differential_privacy': {
+                'epsilon_used': dp_result['epsilon_used'],
+                'delta_used': dp_result['delta_used'],
+                'noise_type': dp_result['noise_type'],
+                'sensitivity': dp_result['sensitivity']
+            },
             'metadata': metadata,
             'remaining_budget': budget_manager.get_remaining_budget(purchaser_id),
             'remaining_requests': remaining_requests,
@@ -585,10 +699,64 @@ def compute_homomorphic():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/estimate-noise', methods=['POST'])
+def estimate_noise():
+    """
+    差分プライバシーによるノイズの大きさを推定
+    クエリ実行前にユーザーが精度を確認できる
+
+    Request JSON:
+        {
+            "operation": "mean",
+            "field": "age",
+            "sample_size": 100,
+            "epsilon": 1.0,  // オプション
+            "noise_type": "laplace"  // または "gaussian"
+        }
+
+    Response JSON:
+        {
+            "sensitivity": 1.2,
+            "expected_noise_magnitude": 1.2,
+            "noise_std_dev": 1.7,
+            "recommendation": "..."
+        }
+    """
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({'error': 'Invalid request body'}), 400
+
+        operation = data.get('operation', 'mean')
+        field = data.get('field', 'age')
+        sample_size = data.get('sample_size', 100)
+        epsilon = data.get('epsilon', 1.0)
+        noise_type_str = data.get('noise_type', 'laplace')
+
+        noise_type = NoiseType.GAUSSIAN if noise_type_str == 'gaussian' else NoiseType.LAPLACE
+
+        # 差分プライバシーインスタンスを作成
+        dp = DifferentialPrivacy(epsilon=epsilon, delta=1e-5)
+
+        # ノイズ推定
+        estimate = dp.estimate_noise_magnitude(
+            operation=operation,
+            field=field,
+            sample_size=sample_size,
+            noise_type=noise_type
+        )
+
+        return jsonify(estimate)
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/verify-proof', methods=['POST'])
 def verify_proof():
     """
-    ZKP証明を検証
+    ZKP証明を検証（単一証明）
 
     Request JSON:
         {
@@ -621,17 +789,136 @@ def verify_proof():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/verify-batch-proof', methods=['POST'])
+def verify_batch_proof():
+    """
+    バッチZKP証明を検証（Merkle Tree + サンプルZKP）
+
+    Request (multipart/form-data):
+        - encrypted_package: ZIPファイル（暗号化パッケージ）
+
+    または Request JSON:
+        {
+            "merkle_root": "...",
+            "sample_proofs": [...],
+            "verification_key": {...}
+        }
+
+    Response JSON:
+        {
+            "overall_valid": true/false,
+            "zkp_verification": {...},
+            "merkle_verification": {...},
+            "individual_results": [...]
+        }
+    """
+    try:
+        batch_zkp_service = BatchZKPService()
+
+        # ZIPファイルからの検証
+        if request.content_type and 'multipart/form-data' in request.content_type:
+            if 'encrypted_package' not in request.files:
+                return jsonify({'error': 'No encrypted package provided'}), 400
+
+            package_file = request.files['encrypted_package']
+
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_path = Path(temp_dir)
+                zip_path = temp_path / 'package.zip'
+                package_file.save(zip_path)
+
+                with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                    zip_ref.extractall(temp_path)
+
+                # バッチ証明ファイルを読み込み
+                batch_proof_path = temp_path / 'batch_proof.json'
+                sample_proofs_path = temp_path / 'sample_proofs.json'
+                vkey_path = temp_path / 'verification_key.json'
+
+                if not batch_proof_path.exists():
+                    return jsonify({
+                        'error': 'Not a batch proof package',
+                        'message': 'This package uses single proof mode. Use /api/verify-proof instead.'
+                    }), 400
+
+                with open(batch_proof_path, 'r') as f:
+                    batch_proof_info = json.load(f)
+
+                with open(sample_proofs_path, 'r') as f:
+                    sample_proofs = json.load(f)
+
+                with open(vkey_path, 'r') as f:
+                    verification_key = json.load(f)
+
+                merkle_root = batch_proof_info['merkle_root']
+
+        else:
+            # JSONリクエストからの検証
+            data = request.get_json()
+
+            if not data:
+                return jsonify({'error': 'Invalid request body'}), 400
+
+            merkle_root = data.get('merkle_root')
+            sample_proofs = data.get('sample_proofs')
+            verification_key = data.get('verification_key')
+
+            if not all([merkle_root, sample_proofs, verification_key]):
+                return jsonify({
+                    'error': 'Missing required fields',
+                    'required': ['merkle_root', 'sample_proofs', 'verification_key']
+                }), 400
+
+        # バッチ証明を検証
+        result = batch_zkp_service.verify_batch_proof(
+            merkle_root=merkle_root,
+            sample_proofs=sample_proofs,
+            verification_key=verification_key
+        )
+
+        # ログ出力
+        if result['overall_valid']:
+            log_security_event(
+                'batch-verification-success',
+                'purchaser',
+                f"Batch proof verified: {result['zkp_verification']['passed']}/{result['zkp_verification']['total']} ZKP, "
+                f"{result['merkle_verification']['passed']}/{result['merkle_verification']['total']} Merkle",
+                'INFO'
+            )
+        else:
+            log_security_event(
+                'batch-verification-failed',
+                'purchaser',
+                f"Batch proof verification failed",
+                'WARNING'
+            )
+
+        return jsonify({
+            **result,
+            'message': 'Batch proof verification successful' if result['overall_valid']
+                      else 'Batch proof verification failed'
+        })
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     print("Starting Provider API...")
-    print("Endpoints:")
+    print("\nEndpoints:")
     print("  POST /api/encrypt - Encrypt patient data and generate ZKP")
+    print("  POST /api/compute - Compute homomorphic operations on encrypted data")
     print("  POST /api/decrypt - Decrypt computation results (with security checks)")
-    print("  POST /api/verify-proof - Verify ZKP proof")
+    print("  POST /api/verify-proof - Verify single ZKP proof")
+    print("  POST /api/verify-batch-proof - Verify batch ZKP proof (Merkle Tree)")
+    print("  POST /api/estimate-noise - Estimate differential privacy noise magnitude")
     print("\nSecurity features enabled:")
     print("  ✓ k-anonymity check (minimum 100 records)")
     print("  ✓ Aggregate-only queries")
     print("  ✓ Rate limiting (100 requests/hour)")
     print("  ✓ Reconstruction attack detection")
     print("  ✓ Privacy budget management")
+    print("  ✓ Differential Privacy (Laplace/Gaussian noise)")
+    print("  ✓ Batch ZKP with Merkle Tree")
     print("\nRunning on http://localhost:5000")
     app.run(debug=True, port=5000)

@@ -699,3 +699,183 @@ print(f"ノイズ付きパラメータ: {noisy_params}")
 
 **ε = 1.0（1つのクエリ/モデルあたり）**
 **総プライバシーバジェット = 10.0（データセットの生涯）**
+
+---
+
+## 本システムでの実装（ZKP-DB）
+
+### 実装クラス
+
+本システムでは `backend/security_checks.py` に差分プライバシーが実装されています。
+
+```python
+from security_checks import DifferentialPrivacy, NoiseType
+
+# インスタンス作成（ε=1.0, δ=1e-5）
+dp = DifferentialPrivacy(epsilon=1.0, delta=1e-5)
+```
+
+### 機能一覧
+
+| 機能 | メソッド | 説明 |
+|------|----------|------|
+| Laplace機構 | `add_laplace_noise()` | (ε)-差分プライバシー |
+| Gaussian機構 | `add_gaussian_noise()` | (ε, δ)-差分プライバシー |
+| 感度計算 | `calculate_sensitivity()` | クエリの感度を自動計算 |
+| 結果へのノイズ付加 | `apply_to_result()` | 統計結果にノイズを適用 |
+| ノイズ推定 | `estimate_noise_magnitude()` | 事前にノイズ量を確認 |
+
+### 使用例1: 平均年齢にノイズを付加
+
+```python
+from security_checks import DifferentialPrivacy, NoiseType
+
+# 差分プライバシーインスタンス
+dp = DifferentialPrivacy(epsilon=1.0, delta=1e-5)
+
+# 元の統計結果
+true_average = 55.2
+
+# ノイズを付加
+dp_result = dp.apply_to_result(
+    result=true_average,
+    operation='mean',      # 操作種類（mean, sum, count等）
+    field='age',           # フィールド名
+    sample_size=100,       # データ数
+    noise_type=NoiseType.LAPLACE
+)
+
+print(f"元の値: {true_average}")
+print(f"ノイズ付き: {dp_result['noisy_result']}")
+print(f"使用したε: {dp_result['epsilon_used']}")
+print(f"感度: {dp_result['sensitivity']}")
+
+# 出力例:
+# 元の値: 55.2
+# ノイズ付き: 55.87
+# 使用したε: 1.0
+# 感度: 1.2
+```
+
+### 使用例2: ノイズ量の事前推定
+
+クエリ実行前にノイズの大きさを確認できます：
+
+```python
+estimate = dp.estimate_noise_magnitude(
+    operation='mean',
+    field='blood_sugar',
+    sample_size=100,
+    noise_type=NoiseType.LAPLACE
+)
+
+print(f"感度: {estimate['sensitivity']}")
+print(f"予想ノイズ量: {estimate['expected_noise_magnitude']}")
+print(f"推奨: {estimate['recommendation']}")
+
+# 出力例:
+# 感度: 2.5
+# 予想ノイズ量: 2.5
+# 推奨: 良好: ノイズは許容範囲内で、実用的な統計が得られます
+```
+
+### 使用例3: Gaussian機構（より強い保証）
+
+```python
+noisy_result = dp.add_gaussian_noise(
+    value=55.2,
+    sensitivity=1.2,
+    epsilon=1.0,
+    delta=1e-5  # δパラメータ
+)
+
+# (ε, δ)-差分プライバシーを保証
+# δ = 失敗確率（非常に小さい値）
+```
+
+### API経由での使用
+
+本システムでは、復号API `/api/decrypt` で自動的に差分プライバシーが適用されます：
+
+```bash
+# 復号リクエスト
+curl -X POST http://localhost:5000/api/decrypt \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider_id": "provider_0",
+    "purchaser_id": "pharma_company",
+    "encrypted_result": "...",
+    "metadata": {
+      "operation": "mean",
+      "field": "age",
+      "sample_size": 100,
+      "noise_type": "laplace"
+    }
+  }'
+```
+
+レスポンス例：
+```json
+{
+  "result": 55.87,
+  "original_result_hidden": true,
+  "differential_privacy": {
+    "epsilon_used": 1.0,
+    "delta_used": null,
+    "noise_type": "laplace",
+    "sensitivity": 1.2
+  },
+  "remaining_budget": 9.0,
+  "status": "success"
+}
+```
+
+### ノイズ推定API
+
+事前にノイズ量を確認するAPI：
+
+```bash
+curl -X POST http://localhost:5000/api/estimate-noise \
+  -H "Content-Type: application/json" \
+  -d '{
+    "operation": "mean",
+    "field": "age",
+    "sample_size": 100,
+    "epsilon": 1.0,
+    "noise_type": "laplace"
+  }'
+```
+
+### フィールド別の感度設定
+
+本システムでは、医療データのフィールドごとに範囲が設定されています：
+
+| フィールド | 範囲 | mean感度 (n=100) |
+|------------|------|------------------|
+| age | 0-120 | 1.2 |
+| blood_pressure_systolic | 80-200 | 1.2 |
+| blood_pressure_diastolic | 50-130 | 0.8 |
+| blood_sugar | 50-300 | 2.5 |
+| cholesterol | 100-400 | 3.0 |
+| bmi | 10-50 | 0.4 |
+
+### プライバシーバジェット管理
+
+累積的なプライバシー損失を管理：
+
+```python
+from security_checks import PrivacyBudgetManager
+
+budget = PrivacyBudgetManager(total_budget=10.0)
+
+# クエリ1
+budget.consume_budget("pharma_co", epsilon=1.0)
+print(budget.get_remaining_budget("pharma_co"))  # 9.0
+
+# クエリ2-10...
+# ...
+
+# バジェット超過時はエラー
+budget.check_budget("pharma_co", required_epsilon=1.0)
+# → ValueError: Privacy budget exceeded
+```

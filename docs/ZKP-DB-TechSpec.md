@@ -1,8 +1,8 @@
 # ZKP-DB 技術仕様書
 ## Technical Specification for Privacy-Preserving Medical Data Marketplace
 
-**Version**: 1.0
-**Last Updated**: 2025-12-27
+**Version**: 2.0
+**Last Updated**: 2025-12-30
 **Status**: Prototype / Proof of Concept
 
 ---
@@ -13,16 +13,18 @@
 2. [アーキテクチャ](#アーキテクチャ)
 3. [準同型暗号の実装](#準同型暗号の実装)
 4. [ゼロ知識証明の実装](#ゼロ知識証明の実装)
-5. [機械学習の実装](#機械学習の実装)
-6. [高度な手法](#高度な手法)
-7. [データフロー](#データフロー)
-8. [計算機資源の要件](#計算機資源の要件)
-9. [パフォーマンス特性](#パフォーマンス特性)
-10. [セキュリティ分析](#セキュリティ分析)
-11. [API仕様](#api仕様)
-12. [実装の詳細](#実装の詳細)
-13. [制限事項と対策](#制限事項と対策)
-14. [今後の拡張](#今後の拡張)
+5. [差分プライバシーの実装](#差分プライバシーの実装)
+6. [バッチZKP（Merkle Tree）](#バッチzkpmerkle-tree)
+7. [機械学習の実装](#機械学習の実装)
+8. [高度な手法](#高度な手法)
+9. [データフロー](#データフロー)
+10. [計算機資源の要件](#計算機資源の要件)
+11. [パフォーマンス特性](#パフォーマンス特性)
+12. [セキュリティ分析](#セキュリティ分析)
+13. [API仕様](#api仕様)
+14. [実装の詳細](#実装の詳細)
+15. [制限事項と対策](#制限事項と対策)
+16. [今後の拡張](#今後の拡張)
 
 ---
 
@@ -36,7 +38,9 @@
 
 1. **Homomorphic Encryption (HE)**: CKKS方式（実数値対応）
 2. **Zero-Knowledge Proof (ZKP)**: Groth16 zkSNARK
-3. **Privacy-Preserving Machine Learning (PPML)**: 暗号化データでのML
+3. **Differential Privacy (DP)**: Laplace/Gaussianノイズ機構
+4. **Batch ZKP with Merkle Tree**: 効率的な全患者データの整合性検証
+5. **Privacy-Preserving Machine Learning (PPML)**: 暗号化データでのML
 
 ### 技術スタック
 
@@ -605,6 +609,327 @@ async function verifyProof(proof, publicSignals) {
 
 3. **Zero-Knowledge (ゼロ知識性)**:
    - 証明からプライベート入力を推測できない
+
+---
+
+## 差分プライバシーの実装
+
+### 差分プライバシーとは
+
+差分プライバシー（Differential Privacy）は、統計クエリの結果にノイズを加えることで、個人のデータがクエリ結果に与える影響を数学的に制限する技術です。
+
+**数学的定義**:
+
+あるアルゴリズム $\mathcal{M}$ が $(\varepsilon, \delta)$-差分プライバシーを満たすとは、任意の隣接データセット $D, D'$（1レコードのみ異なる）と任意の出力集合 $S$ に対して：
+
+$$
+\Pr[\mathcal{M}(D) \in S] \leq e^\varepsilon \cdot \Pr[\mathcal{M}(D') \in S] + \delta
+$$
+
+### パラメータの意味
+
+| パラメータ | 意味 | 推奨値 |
+|-----------|------|--------|
+| $\varepsilon$ (epsilon) | プライバシー損失。小さいほど高いプライバシー | 0.1〜1.0 |
+| $\delta$ | 確率的な緩和。通常は非常に小さい値 | $\frac{1}{n^2}$（n=サンプル数） |
+| Sensitivity | 1レコードがクエリ結果に与える最大影響 | 演算によって異なる |
+
+### 本システムでの実装
+
+#### DifferentialPrivacy クラス
+
+```python
+from enum import Enum
+import numpy as np
+
+class NoiseType(Enum):
+    LAPLACE = "laplace"
+    GAUSSIAN = "gaussian"
+
+class DifferentialPrivacy:
+    def __init__(self, epsilon: float = 1.0, delta: float = 1e-5):
+        self.epsilon = epsilon
+        self.delta = delta
+
+    def calculate_sensitivity(self, operation: str, data_range: tuple,
+                              sample_size: int) -> float:
+        """演算タイプに基づいて感度を計算"""
+        range_size = data_range[1] - data_range[0]
+
+        if operation == "mean":
+            return range_size / sample_size
+        elif operation == "sum":
+            return range_size
+        elif operation == "count":
+            return 1
+        elif operation == "variance":
+            return (range_size ** 2) / sample_size
+        else:
+            return range_size / sample_size
+
+    def add_laplace_noise(self, value, sensitivity, epsilon=None):
+        """ラプラスノイズを追加"""
+        eps = epsilon or self.epsilon
+        scale = sensitivity / eps
+        noise = np.random.laplace(loc=0, scale=scale)
+        return value + noise
+
+    def add_gaussian_noise(self, value, sensitivity, epsilon=None, delta=None):
+        """ガウスノイズを追加（より強いプライバシー保証）"""
+        eps = epsilon or self.epsilon
+        d = delta or self.delta
+        sigma = sensitivity * np.sqrt(2 * np.log(1.25 / d)) / eps
+        noise = np.random.normal(loc=0, scale=sigma)
+        return value + noise
+```
+
+#### フィールド別感度設定
+
+| フィールド | データ範囲 | 平均の感度 (n=100) |
+|-----------|-----------|-------------------|
+| age | 0〜120 | 1.2 |
+| blood_pressure_systolic | 80〜200 | 1.2 |
+| blood_pressure_diastolic | 50〜130 | 0.8 |
+| blood_sugar | 50〜300 | 2.5 |
+| cholesterol | 100〜400 | 3.0 |
+| bmi | 10〜50 | 0.4 |
+
+#### 使用例
+
+```python
+dp = DifferentialPrivacy(epsilon=1.0, delta=1e-5)
+
+# 復号結果にノイズを適用
+result = {
+    "operation": "mean",
+    "field": "blood_pressure_systolic",
+    "value": 135.5
+}
+
+noisy_result = dp.apply_to_result(
+    result=result,
+    operation="mean",
+    field="blood_pressure_systolic",
+    sample_size=100,
+    noise_type=NoiseType.LAPLACE
+)
+# noisy_result["noisy_value"] ≈ 135.5 ± 1.2
+```
+
+### プライバシーとユーティリティのトレードオフ
+
+```
+epsilon値   ノイズレベル    精度への影響
+─────────────────────────────────────────
+0.1        非常に高い      ±10〜20%
+0.5        高い            ±2〜5%
+1.0        中程度          ±1〜2%（推奨）
+2.0        低い            ±0.5〜1%
+5.0        非常に低い      ±0.1〜0.5%
+```
+
+---
+
+## バッチZKP（Merkle Tree）
+
+### 概要
+
+従来のZKP方式では、各患者に対して個別にZKP証明を生成していましたが、大量のデータに対しては効率が悪くなります。バッチZKPは、Merkle Treeを使用して全患者データの整合性を効率的に検証します。
+
+### Merkle Treeとは
+
+Merkle Treeは、データの集合を階層的にハッシュ化したツリー構造です。
+
+```
+                    Root Hash
+                   /         \
+            Hash(0-1)        Hash(2-3)
+           /       \        /       \
+     Hash(P0)  Hash(P1)  Hash(P2)  Hash(P3)
+        |         |         |         |
+      Patient0  Patient1  Patient2  Patient3
+```
+
+**特性**:
+- **Root Hash**: 全データの要約（32バイト）
+- **証明サイズ**: $O(\log n)$（nはデータ数）
+- **検証時間**: $O(\log n)$
+
+### 本システムでの実装
+
+#### MerkleTree クラス
+
+```python
+import hashlib
+from typing import List, Dict, Optional
+
+class MerkleTree:
+    def __init__(self, hash_func=None):
+        self.hash_func = hash_func or self._sha256_hash
+        self.leaves: List[str] = []
+        self.tree: List[List[str]] = []
+        self.root: Optional[str] = None
+
+    def _sha256_hash(self, data: str) -> str:
+        return hashlib.sha256(data.encode()).hexdigest()
+
+    def add_leaf_hash(self, leaf_hash: str):
+        """リーフハッシュを追加"""
+        self.leaves.append(leaf_hash)
+
+    def build(self) -> str:
+        """ツリーを構築してルートを返す"""
+        if not self.leaves:
+            raise ValueError("No leaves to build tree")
+
+        current_level = self.leaves[:]
+
+        # 奇数の場合、最後を複製
+        if len(current_level) % 2 == 1:
+            current_level.append(current_level[-1])
+
+        self.tree = [current_level]
+
+        while len(current_level) > 1:
+            next_level = []
+            for i in range(0, len(current_level), 2):
+                combined = current_level[i] + current_level[i+1]
+                next_level.append(self.hash_func(combined))
+
+            if len(next_level) > 1 and len(next_level) % 2 == 1:
+                next_level.append(next_level[-1])
+
+            self.tree.append(next_level)
+            current_level = next_level
+
+        self.root = current_level[0]
+        return self.root
+
+    def get_proof(self, index: int) -> List[Dict]:
+        """指定インデックスの包含証明を生成"""
+        if not self.tree:
+            raise ValueError("Tree not built yet")
+
+        proof = []
+        current_index = index
+
+        for level in range(len(self.tree) - 1):
+            level_size = len(self.tree[level])
+            is_right = current_index % 2 == 1
+            sibling_index = current_index - 1 if is_right else current_index + 1
+
+            if sibling_index < level_size:
+                proof.append({
+                    "hash": self.tree[level][sibling_index],
+                    "position": "left" if is_right else "right"
+                })
+
+            current_index = current_index // 2
+
+        return proof
+
+    @staticmethod
+    def verify_proof(leaf_hash: str, proof: List[Dict], root: str) -> bool:
+        """包含証明を検証"""
+        current_hash = leaf_hash
+        hash_func = lambda x: hashlib.sha256(x.encode()).hexdigest()
+
+        for step in proof:
+            if step["position"] == "left":
+                combined = step["hash"] + current_hash
+            else:
+                combined = current_hash + step["hash"]
+            current_hash = hash_func(combined)
+
+        return current_hash == root
+```
+
+#### BatchZKPService クラス
+
+```python
+class BatchZKPService:
+    def __init__(self):
+        self.merkle_tree = MerkleTree()
+
+    def hash_patient_data(self, patient_data: Dict) -> str:
+        """患者データをハッシュ化"""
+        sorted_keys = sorted(patient_data.keys())
+        data_string = "|".join(f"{k}:{patient_data[k]}" for k in sorted_keys)
+        return hashlib.sha256(data_string.encode()).hexdigest()
+
+    def generate_batch_proof(self, patients_df, sample_size: int = 10) -> Dict:
+        """バッチ証明を生成"""
+        # 1. 全患者のハッシュを計算
+        self.merkle_tree = MerkleTree()
+        patient_hashes = []
+
+        for _, patient in patients_df.iterrows():
+            patient_hash = self.hash_patient_data(patient.to_dict())
+            patient_hashes.append(patient_hash)
+            self.merkle_tree.add_leaf_hash(patient_hash)
+
+        # 2. Merkle Treeを構築
+        merkle_root = self.merkle_tree.build()
+
+        # 3. サンプリングしてZKP証明を生成
+        sample_indices = np.random.choice(
+            len(patient_hashes),
+            min(sample_size, len(patient_hashes)),
+            replace=False
+        )
+
+        sample_proofs = []
+        for idx in sample_indices:
+            proof = self.merkle_tree.get_proof(idx)
+            sample_proofs.append({
+                "index": int(idx),
+                "leaf_hash": patient_hashes[idx],
+                "merkle_proof": proof
+            })
+
+        return {
+            "merkle_root": merkle_root,
+            "total_patients": len(patient_hashes),
+            "sample_size": len(sample_proofs),
+            "sample_proofs": sample_proofs,
+            "coverage": len(sample_proofs) / len(patient_hashes)
+        }
+```
+
+### 従来方式との比較
+
+| 指標 | 従来（個別ZKP） | バッチZKP |
+|------|----------------|-----------|
+| 証明数 | n（患者数） | 1 + サンプル数 |
+| 証明サイズ | n × 200B | 32B + log(n) × サンプル数 |
+| 生成時間 | O(n) | O(n) ハッシュ + O(sample) ZKP |
+| 検証時間 | O(n) | O(sample × log n) |
+| 全体カバレッジ | 100% | 統計的保証 |
+
+### 使用例
+
+```python
+# バッチZKPの生成
+batch_zkp_service = BatchZKPService()
+batch_proof = batch_zkp_service.generate_batch_proof(
+    patients_df=patients,
+    sample_size=10
+)
+
+# 結果
+print(f"Merkle Root: {batch_proof['merkle_root']}")
+print(f"Total patients: {batch_proof['total_patients']}")
+print(f"Sample coverage: {batch_proof['coverage']:.1%}")
+
+# 検証
+for sample in batch_proof['sample_proofs']:
+    is_valid = MerkleTree.verify_proof(
+        leaf_hash=sample['leaf_hash'],
+        proof=sample['merkle_proof'],
+        root=batch_proof['merkle_root']
+    )
+    print(f"Patient {sample['index']}: {'Valid' if is_valid else 'Invalid'}")
+```
 
 ---
 
@@ -1497,8 +1822,11 @@ Safe Harbor方式:
 
 ```
 POST   /api/v1/encrypt           データの暗号化
+POST   /api/v1/decrypt           データの復号（自動DP適用）
 POST   /api/v1/proof/generate    証明の生成
 POST   /api/v1/proof/verify      証明の検証
+POST   /api/v1/estimate-noise    ノイズ量の事前推定
+POST   /api/v1/verify-batch-proof バッチ証明の検証
 POST   /api/v1/query             暗号化クエリ実行
 GET    /api/v1/data/:id          データパッケージ取得
 POST   /api/v1/ml/train          モデル訓練 (平文)
@@ -1616,6 +1944,80 @@ Content-Type: application/json
   "valid": true,
   "verified_at": "2025-12-27T10:32:00Z",
   "message": "Proof is valid. Data integrity confirmed."
+}
+```
+
+#### ノイズ推定 API
+
+**リクエスト**:
+
+```http
+POST /api/v1/estimate-noise
+Content-Type: application/json
+
+{
+  "operation": "mean",
+  "field": "blood_pressure_systolic",
+  "sample_size": 100,
+  "noise_type": "laplace",
+  "epsilon": 1.0
+}
+```
+
+**レスポンス**:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "field": "blood_pressure_systolic",
+  "operation": "mean",
+  "noise_type": "laplace",
+  "epsilon": 1.0,
+  "sensitivity": 1.2,
+  "expected_noise_std": 1.7,
+  "expected_99_percentile_noise": 5.5,
+  "message": "期待されるノイズの99%は±5.5以内です"
+}
+```
+
+#### バッチ証明検証 API
+
+**リクエスト**:
+
+```http
+POST /api/v1/verify-batch-proof
+Content-Type: application/json
+
+{
+  "merkle_root": "abc123...",
+  "sample_proofs": [
+    {
+      "index": 0,
+      "leaf_hash": "def456...",
+      "merkle_proof": [
+        {"hash": "ghi789...", "position": "right"}
+      ]
+    }
+  ],
+  "verification_key": "..."
+}
+```
+
+**レスポンス**:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "all_valid": true,
+  "verified_count": 10,
+  "total_proofs": 10,
+  "invalid_indices": [],
+  "merkle_root_verified": true,
+  "message": "全ての証明が検証されました"
 }
 ```
 
@@ -1944,10 +2346,15 @@ def test_end_to_end():
 
 ### 今後の改善計画
 
+**実装済み**:
+- [x] 差分プライバシー（Laplace/Gaussianノイズ）
+- [x] バッチZKP（Merkle Tree）
+- [x] API開発（暗号化・復号・証明検証）
+
 **Phase 1 (3ヶ月)**:
 - [ ] GPU活用による高速化
-- [ ] バッチ処理の最適化
-- [ ] API開発
+- [ ] バッチ処理の更なる最適化
+- [ ] プライバシー予算管理システム
 
 **Phase 2 (6ヶ月)**:
 - [ ] より効率的なZKP回路
@@ -1956,7 +2363,7 @@ def test_end_to_end():
 
 **Phase 3 (12ヶ月)**:
 - [ ] Federated Learningとの統合
-- [ ] 差分プライバシーの追加
+- [ ] FHIR対応（医療データ標準）
 - [ ] 本番環境での実証実験
 
 ---
@@ -1993,23 +2400,15 @@ class FederatedZKPSystem:
         pass
 ```
 
-#### 3. 差分プライバシー
+#### 3. 差分プライバシー（実装済み）
 
-```python
-def add_differential_privacy(data, epsilon=1.0):
-    """
-    ラプラスノイズを追加
+本システムでは既に差分プライバシーが実装されています。詳細は「差分プライバシーの実装」セクションを参照してください。
 
-    Args:
-        data: 元データ
-        epsilon: プライバシーパラメータ
-
-    Returns:
-        ノイズ付加データ
-    """
-    noise = np.random.laplace(0, 1/epsilon, size=data.shape)
-    return data + noise
-```
+**実装済み機能**:
+- Laplace/Gaussianノイズ機構
+- フィールド別感度計算
+- 事前ノイズ推定API
+- 復号時の自動DP適用
 
 ### 中期的な拡張
 

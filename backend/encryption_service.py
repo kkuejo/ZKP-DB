@@ -7,10 +7,374 @@ import pickle
 import subprocess
 import tempfile
 import os
+import hashlib
 from pathlib import Path
+from typing import List, Dict, Optional, Tuple
 import tenseal as ts
 import pandas as pd
 import numpy as np
+
+
+class MerkleTree:
+    """
+    Merkle Tree実装
+    全患者データのハッシュを効率的に集約・検証
+    """
+
+    def __init__(self, hash_func=None):
+        """
+        Args:
+            hash_func: ハッシュ関数（デフォルト: SHA256）
+        """
+        self.hash_func = hash_func or self._sha256_hash
+        self.leaves: List[str] = []
+        self.tree: List[List[str]] = []
+        self.root: Optional[str] = None
+
+    def _sha256_hash(self, data: str) -> str:
+        """SHA256ハッシュを計算"""
+        return hashlib.sha256(data.encode()).hexdigest()
+
+    def _combine_hash(self, left: str, right: str) -> str:
+        """2つのハッシュを結合してハッシュ化"""
+        return self.hash_func(left + right)
+
+    def add_leaf(self, data: str) -> str:
+        """
+        葉ノードを追加
+
+        Args:
+            data: ハッシュ化するデータ
+
+        Returns:
+            str: 葉ノードのハッシュ
+        """
+        leaf_hash = self.hash_func(data)
+        self.leaves.append(leaf_hash)
+        return leaf_hash
+
+    def add_leaf_hash(self, leaf_hash: str):
+        """既にハッシュ化されたデータを追加"""
+        self.leaves.append(leaf_hash)
+
+    def build(self) -> str:
+        """
+        Merkle Treeを構築
+
+        Returns:
+            str: Merkle Root
+        """
+        if not self.leaves:
+            raise ValueError("No leaves to build tree")
+
+        # 葉が奇数の場合、最後の葉を複製
+        leaves = self.leaves.copy()
+        if len(leaves) % 2 == 1:
+            leaves.append(leaves[-1])
+
+        self.tree = [leaves]
+
+        # ボトムアップで木を構築
+        current_level = leaves
+        while len(current_level) > 1:
+            next_level = []
+            for i in range(0, len(current_level), 2):
+                left = current_level[i]
+                right = current_level[i + 1] if i + 1 < len(current_level) else left
+                parent = self._combine_hash(left, right)
+                next_level.append(parent)
+
+            self.tree.append(next_level)
+            current_level = next_level
+
+        self.root = current_level[0]
+        return self.root
+
+    def get_proof(self, index: int) -> List[Dict]:
+        """
+        特定の葉ノードのMerkle Proofを取得
+
+        Args:
+            index: 葉ノードのインデックス
+
+        Returns:
+            List[Dict]: 証明パス（各ステップで兄弟ノードと位置を含む）
+        """
+        if not self.tree:
+            raise ValueError("Tree not built yet")
+
+        if index < 0 or index >= len(self.leaves):
+            raise ValueError(f"Invalid index: {index}")
+
+        proof = []
+        current_index = index
+
+        for level in self.tree[:-1]:  # ルートを除く各レベル
+            # 兄弟ノードを取得
+            if current_index % 2 == 0:
+                sibling_index = current_index + 1
+                position = 'right'
+            else:
+                sibling_index = current_index - 1
+                position = 'left'
+
+            if sibling_index < len(level):
+                proof.append({
+                    'hash': level[sibling_index],
+                    'position': position
+                })
+
+            current_index = current_index // 2
+
+        return proof
+
+    def verify_proof(self, leaf_hash: str, proof: List[Dict], root: str) -> bool:
+        """
+        Merkle Proofを検証
+
+        Args:
+            leaf_hash: 検証する葉ノードのハッシュ
+            proof: 証明パス
+            root: 期待されるMerkle Root
+
+        Returns:
+            bool: 検証成功時True
+        """
+        current_hash = leaf_hash
+
+        for step in proof:
+            sibling_hash = step['hash']
+            position = step['position']
+
+            if position == 'left':
+                current_hash = self._combine_hash(sibling_hash, current_hash)
+            else:
+                current_hash = self._combine_hash(current_hash, sibling_hash)
+
+        return current_hash == root
+
+    def to_dict(self) -> Dict:
+        """木の情報を辞書形式で出力"""
+        return {
+            'root': self.root,
+            'leaf_count': len(self.leaves),
+            'tree_height': len(self.tree),
+            'leaves': self.leaves
+        }
+
+
+class BatchZKPService:
+    """
+    バッチZKP証明サービス
+    全患者データの正当性を効率的に証明
+    """
+
+    def __init__(self):
+        self.zkp_service = ZKPService()
+        self.merkle_tree = MerkleTree()
+
+    def hash_patient_data(self, patient_data: Dict) -> str:
+        """
+        患者データをハッシュ化
+
+        Args:
+            patient_data: 患者データ辞書
+
+        Returns:
+            str: ハッシュ値
+        """
+        # 数値フィールドのみを使用
+        numeric_fields = ['age', 'blood_pressure_systolic', 'blood_pressure_diastolic',
+                         'blood_sugar', 'cholesterol', 'bmi', 'hospitalization_count']
+
+        # 一貫性のためにフィールドをソートして結合
+        data_str = '|'.join(
+            f"{field}:{patient_data.get(field, 0)}"
+            for field in sorted(numeric_fields)
+            if field in patient_data
+        )
+
+        return hashlib.sha256(data_str.encode()).hexdigest()
+
+    def generate_batch_proof(
+        self,
+        patients_df: pd.DataFrame,
+        sample_size: int = 10
+    ) -> Dict:
+        """
+        全患者データのバッチZKP証明を生成
+
+        方式:
+        1. 全患者データのハッシュをMerkle Treeに追加
+        2. サンプル患者（等間隔で選択）のZKP証明を生成
+        3. Merkle RootとサンプルZKP証明を返却
+
+        Args:
+            patients_df: 患者データのDataFrame
+            sample_size: ZKP証明を生成するサンプル数
+
+        Returns:
+            Dict: {
+                'merkle_root': Merkle Root,
+                'merkle_tree_info': 木の情報,
+                'sample_proofs': サンプルZKP証明,
+                'coverage': カバレッジ情報
+            }
+        """
+        total_patients = len(patients_df)
+
+        # Merkle Treeを構築
+        self.merkle_tree = MerkleTree()
+        patient_hashes = []
+
+        for idx, row in patients_df.iterrows():
+            patient_data = row.to_dict()
+            patient_hash = self.hash_patient_data(patient_data)
+            self.merkle_tree.add_leaf_hash(patient_hash)
+            patient_hashes.append({
+                'index': idx,
+                'hash': patient_hash
+            })
+
+        merkle_root = self.merkle_tree.build()
+
+        # サンプルインデックスを計算（等間隔）
+        sample_indices = self._select_sample_indices(total_patients, sample_size)
+
+        # サンプル患者のZKP証明を生成
+        sample_proofs = []
+        for idx in sample_indices:
+            patient_data = patients_df.iloc[idx].to_dict()
+
+            try:
+                # ZKP証明を生成
+                zkp_proof = self.zkp_service.generate_proof(patient_data)
+
+                # Merkle Proofを取得
+                merkle_proof = self.merkle_tree.get_proof(idx)
+
+                sample_proofs.append({
+                    'patient_index': idx,
+                    'patient_hash': patient_hashes[idx]['hash'],
+                    'zkp_proof': zkp_proof['proof'],
+                    'public_signals': zkp_proof['public_signals'],
+                    'data_hash': zkp_proof['data_hash'],
+                    'merkle_proof': merkle_proof,
+                    'is_valid': zkp_proof.get('is_valid', '1')
+                })
+            except (ValueError, subprocess.CalledProcessError) as e:
+                # データが範囲外の場合はスキップしてログ
+                sample_proofs.append({
+                    'patient_index': idx,
+                    'patient_hash': patient_hashes[idx]['hash'],
+                    'error': str(e),
+                    'zkp_proof': None
+                })
+
+        # 統計情報を計算
+        successful_proofs = len([p for p in sample_proofs if p.get('zkp_proof')])
+
+        return {
+            'merkle_root': merkle_root,
+            'merkle_tree_info': {
+                'leaf_count': total_patients,
+                'tree_height': len(self.merkle_tree.tree)
+            },
+            'sample_proofs': sample_proofs,
+            'coverage': {
+                'total_patients': total_patients,
+                'sampled_patients': len(sample_indices),
+                'successful_proofs': successful_proofs,
+                'coverage_percentage': (successful_proofs / total_patients) * 100,
+                'sample_indices': sample_indices
+            },
+            'verification_key': self.zkp_service.get_verification_key()
+        }
+
+    def _select_sample_indices(self, total: int, sample_size: int) -> List[int]:
+        """
+        等間隔でサンプルインデックスを選択
+
+        Args:
+            total: 総数
+            sample_size: サンプルサイズ
+
+        Returns:
+            List[int]: サンプルインデックスのリスト
+        """
+        if sample_size >= total:
+            return list(range(total))
+
+        # 等間隔でサンプリング
+        step = total / sample_size
+        return [int(i * step) for i in range(sample_size)]
+
+    def verify_batch_proof(
+        self,
+        merkle_root: str,
+        sample_proofs: List[Dict],
+        verification_key: Dict
+    ) -> Dict:
+        """
+        バッチZKP証明を検証
+
+        Args:
+            merkle_root: Merkle Root
+            sample_proofs: サンプルZKP証明
+            verification_key: 検証鍵
+
+        Returns:
+            Dict: 検証結果
+        """
+        results = []
+
+        for proof_data in sample_proofs:
+            if proof_data.get('error'):
+                results.append({
+                    'patient_index': proof_data['patient_index'],
+                    'zkp_valid': False,
+                    'merkle_valid': False,
+                    'error': proof_data['error']
+                })
+                continue
+
+            # ZKP証明を検証
+            zkp_valid = self.zkp_service.verify_proof(
+                proof_data['zkp_proof'],
+                proof_data['public_signals']
+            )
+
+            # Merkle Proofを検証
+            merkle_valid = self.merkle_tree.verify_proof(
+                proof_data['patient_hash'],
+                proof_data['merkle_proof'],
+                merkle_root
+            )
+
+            results.append({
+                'patient_index': proof_data['patient_index'],
+                'zkp_valid': zkp_valid,
+                'merkle_valid': merkle_valid
+            })
+
+        # 全体の検証結果
+        all_zkp_valid = all(r.get('zkp_valid', False) for r in results)
+        all_merkle_valid = all(r.get('merkle_valid', False) for r in results)
+
+        return {
+            'overall_valid': all_zkp_valid and all_merkle_valid,
+            'zkp_verification': {
+                'all_valid': all_zkp_valid,
+                'passed': sum(1 for r in results if r.get('zkp_valid')),
+                'total': len(results)
+            },
+            'merkle_verification': {
+                'all_valid': all_merkle_valid,
+                'passed': sum(1 for r in results if r.get('merkle_valid')),
+                'total': len(results)
+            },
+            'individual_results': results
+        }
 
 
 _GLOBAL_CONTEXT = None
