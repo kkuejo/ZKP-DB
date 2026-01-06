@@ -212,13 +212,18 @@ docker-compose up -d -e PORT=8081
 
 **症状**: Docker コンテナがクラッシュ
 
+**原因**: デフォルトパラメータ（`poly_modulus_degree=8192`）は約2GB以上のメモリを使用
+
 **解決策**:
-1. Dockerのメモリ制限を増やす（Docker Desktop設定）
-2. または暗号化パラメータをさらに軽量化：
+1. Dockerのメモリ制限を増やす（Docker Desktop設定で4GB以上を推奨）
+2. または暗号化パラメータを軽量化：
    ```python
-   # backend/encryption_service.py
-   poly_modulus_degree=1024  # 2048→1024
+   # backend/encryption_service.py の _get_shared_context() 関数
+   poly_modulus_degree=2048,  # 8192→2048に軽量化
+   coeff_mod_bit_sizes=[30, 20, 20],  # [60,40,40,60]→軽量化
+   ctx.global_scale = 2**20  # 2**40→軽量化
    ```
+   ⚠️ セキュリティレベルは低下しますが、1GB以下で動作可能
 
 ### ZKP証明生成エラー
 

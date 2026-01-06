@@ -382,18 +382,18 @@ _GLOBAL_CONTEXT = None
 
 def _get_shared_context():
     """
-    超軽量パラメータで生成したCKKSコンテキストを使い回す。
-    Render無料枠（512MB RAM制限）向けに最適化。
+    標準的なCKKSコンテキストを使い回す。
+    ローカル環境用の十分なパラメータ設定。
     """
     global _GLOBAL_CONTEXT
     if _GLOBAL_CONTEXT is None:
         ctx = ts.context(
             ts.SCHEME_TYPE.CKKS,
-            poly_modulus_degree=2048,  # 4096→2048に軽量化（メモリ削減）
-            coeff_mod_bit_sizes=[30, 20]  # ビットサイズも削減
+            poly_modulus_degree=8192,  # 標準的なセキュリティレベル
+            coeff_mod_bit_sizes=[60, 40, 40, 60]  # 複数の乗算レベルをサポート
         )
-        # 加算とスカラー倍のみなのでGalois/Relinキーは生成しない（負荷軽減）
-        ctx.global_scale = 2**15
+        # 加算とスカラー倍のみなのでGalois/Relinキーは生成しない
+        ctx.global_scale = 2**40
         _GLOBAL_CONTEXT = ctx
     return _GLOBAL_CONTEXT
 

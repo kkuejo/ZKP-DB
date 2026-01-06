@@ -135,6 +135,16 @@ npm run dev  # http://localhost:5174
 - 復号は常に `/api/decrypt` 経由で行います
 - ローカル環境では`http://localhost:8080`、本番環境では`https://zkp-db.onrender.com`を使用
 
+#### 暗号化パラメータについて
+
+**ローカル環境（デフォルト）**:
+- `poly_modulus_degree=8192` - 標準的なセキュリティレベル（約128ビット）
+- 十分なメモリ（2GB以上）を推奨
+
+**Render無料プラン（512MB制限）**:
+- メモリ不足の場合は`backend/encryption_service.py`でパラメータを軽量化
+- 詳細は [RENDER_DEPLOY.md](./RENDER_DEPLOY.md) を参照
+
 ## 使い方
 
 ### クイックスタート: 統合デモの実行

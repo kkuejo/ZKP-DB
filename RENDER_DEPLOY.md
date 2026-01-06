@@ -110,10 +110,18 @@ curl https://zkp-db-backend.onrender.com/api/health
 
 **症状**: アプリケーションがクラッシュ、"Out of Memory"
 
+**原因**: デフォルトのパラメータ（`poly_modulus_degree=8192`）は512MB RAM制限下では動作しません
+
 **解決策**:
 1. Renderのログを確認
-2. `encryption_service.py`の`poly_modulus_degree`を4096から2048に下げる（セキュリティレベル低下）
-3. または有料プラン（Starter: $7/月、1GB RAM）にアップグレード
+2. `backend/encryption_service.py`の`_get_shared_context()`関数で以下のように変更:
+   ```python
+   poly_modulus_degree=2048,  # 8192→2048に軽量化
+   coeff_mod_bit_sizes=[30, 20, 20],  # [60,40,40,60]→軽量化
+   ctx.global_scale = 2**20  # 2**40→軽量化
+   ```
+   ⚠️ セキュリティレベルは低下しますが、512MB環境で動作可能になります
+3. または有料プラン（Standard: $25/月、2GB RAM）にアップグレード
 
 ### コールドスタート遅延
 

@@ -696,6 +696,15 @@ def compute_homomorphic():
             })
 
     except Exception as e:
+        import traceback
+        error_details = traceback.format_exc()
+        log_security_event(
+            'compute-error',
+            'unknown',
+            f'Error during homomorphic computation: {str(e)}\n{error_details}',
+            'ERROR'
+        )
+        print(f"Error in /api/compute: {error_details}")
         return jsonify({'error': str(e)}), 500
 
 
