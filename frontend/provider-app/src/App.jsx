@@ -169,14 +169,46 @@ function App() {
 
         <div className="info-card">
           <h3>📦 販売パッケージの内容</h3>
-          <ul>
-            <li><strong>encrypted_data.pkl</strong> - 暗号化された患者データ</li>
-            <li><strong>public_context.pkl</strong> - 公開鍵（購入者が計算に使用）</li>
-            <li><strong>proof.json</strong> - ZKP証明（データの正当性を証明）</li>
-            <li><strong>public_signals.json</strong> - 公開信号</li>
-            <li><strong>verification_key.json</strong> - 検証鍵</li>
-            <li><strong>metadata.json</strong> - メタデータ</li>
-          </ul>
+
+          <div className="file-explanation">
+            <h4>encrypted_data.pkl（暗号化データ）</h4>
+            <p><strong>用途:</strong> 患者データを準同型暗号（CKKS）で暗号化したデータ</p>
+            <p><strong>特徴:</strong> 暗号化されたまま統計計算（平均、合計など）が可能</p>
+          </div>
+
+          <div className="file-explanation">
+            <h4>public_context.pkl（公開鍵コンテキスト）</h4>
+            <p><strong>用途:</strong> 購入者が暗号化データに対して準同型演算を実行するための公開鍵</p>
+            <p><strong>重要:</strong> 秘密鍵は含まれないため、復号はできない</p>
+          </div>
+
+          <div className="file-explanation">
+            <h4>proof.json（ZKP証明）</h4>
+            <p><strong>用途:</strong> データの正当性を数学的に証明</p>
+            <p><strong>内容:</strong> Groth16 zkSNARK形式の暗号学的証明データ</p>
+            <p><strong>証明内容:</strong> 年齢、血圧、血糖値、コレステロールの範囲が有効であることを、実際の値を明かさずに証明</p>
+            <p><strong>サイズ:</strong> 約1KB（非常にコンパクト）</p>
+          </div>
+
+          <div className="file-explanation">
+            <h4>public_signals.json（公開信号）</h4>
+            <p><strong>用途:</strong> ZKP証明を検証するための公開パラメータ</p>
+            <p><strong>内容:</strong> データのハッシュ値、範囲チェック結果など</p>
+            <p><strong>重要性:</strong> 改ざんされると証明が無効になる</p>
+          </div>
+
+          <div className="file-explanation">
+            <h4>verification_key.json（検証鍵）</h4>
+            <p><strong>用途:</strong> 購入者がZKP証明を独立して検証するための公開鍵</p>
+            <p><strong>公開性:</strong> 誰でも使用可能。第三者による検証を可能にする</p>
+          </div>
+
+          <div className="file-explanation">
+            <h4>metadata.json（メタデータ）</h4>
+            <p><strong>用途:</strong> パッケージ全体の情報</p>
+            <p><strong>内容:</strong> 患者数、フィールド名、暗号化パラメータ、Provider ID、データハッシュなど</p>
+            <p><strong>用途:</strong> 復号API呼び出し時に必要</p>
+          </div>
 
           <h3>🔒 セキュリティ要件</h3>
           <ul>
@@ -186,12 +218,22 @@ function App() {
             <li>✅ 準同型暗号: 暗号化されたまま統計計算可能</li>
           </ul>
 
-          <h3>🔍 ZKPで検証している条件</h3>
+          <h3>🔍 ZKPで検証している条件（範囲チェック）</h3>
+          <p>以下の全ての条件を満たすことを、データの中身を明かさずに証明します：</p>
           <ul>
-            <li>年齢などの数値が事前に決めた範囲内であること</li>
-            <li>血圧・血糖などの項目が不正な桁数/形式でないこと</li>
-            <li>入力全体のハッシュ値が証明に含まれ、改ざんされていないこと</li>
-            <li>検証鍵 (verification_key.json) で第三者が同じ検証を再現可能であること</li>
+            <li><strong>年齢:</strong> 0歳 ≤ age ≤ 120歳</li>
+            <li><strong>収縮期血圧:</strong> 80 mmHg ≤ blood_pressure_systolic ≤ 200 mmHg</li>
+            <li><strong>拡張期血圧:</strong> 50 mmHg ≤ blood_pressure_diastolic ≤ 130 mmHg</li>
+            <li><strong>血糖値:</strong> 50 mg/dL ≤ blood_sugar ≤ 300 mg/dL</li>
+            <li><strong>コレステロール:</strong> 100 mg/dL ≤ cholesterol ≤ 400 mg/dL</li>
+          </ul>
+
+          <h3>🔐 ZKPによるデータ完全性の保証</h3>
+          <ul>
+            <li><strong>ハッシュ値の計算:</strong> 全フィールドをPoseidonハッシュ関数で集約し、改ざん検出が可能</li>
+            <li><strong>数学的証明:</strong> Groth16 zkSNARKにより、上記の範囲チェックが全て通ったことを証明</li>
+            <li><strong>第三者検証:</strong> 検証鍵 (verification_key.json) で誰でも証明の正当性を検証可能</li>
+            <li><strong>偽造不可能性:</strong> 楕円曲線離散対数問題により、偽の証明を作成することは計算量的に不可能</li>
           </ul>
 
           <div className="warning">

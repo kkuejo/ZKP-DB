@@ -177,6 +177,35 @@ input[type="file"] {
   color: #555;
 }
 
+.file-explanation {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: #fafafa;
+  border-radius: 8px;
+  border-left: 3px solid #667eea;
+}
+
+.file-explanation h4 {
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+  color: #667eea;
+}
+
+.file-explanation p {
+  margin: 0.3rem 0;
+  line-height: 1.6;
+}
+
+.file-explanation ul {
+  margin: 0.5rem 0;
+  padding-left: 1.5rem;
+  list-style-position: outside;
+}
+
+.file-explanation li {
+  margin: 0.3rem 0;
+}
+
 .info-card li {
   margin: 0.5rem 0;
 }

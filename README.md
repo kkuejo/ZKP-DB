@@ -709,6 +709,22 @@ docs/
 
 PDFは日本語対応、目次付き、見やすいレイアウトで生成されます。
 
+## 技術ドキュメント
+
+より詳しい技術情報は以下のドキュメントを参照してください：
+
+### 初心者向け
+- **[ZKP検証の仕組み](./docs/ZKP-Technical.md)** - proof.jsonとpublic_signals.jsonから何が検証されているかを素人にも分かりやすく解説
+- **[ZKP-DB説明資料](./docs/ZKP-DB_Explain.md)** - システム全体の概要と営業向け説明
+- **[差分プライバシー入門](./docs/DifferentialPrivacyExplained.md)** - 差分プライバシーの直感的な説明
+
+### 技術者向け
+- **[技術仕様書](./docs/ZKP-DB-TechSpec.md)** - システムの詳細な技術仕様
+- **[準同型暗号解説](./docs/HomomorphicEncryption.md)** - CKKS方式の数学的背景
+- **[ゼロ知識証明の背景](./docs/ZKP.md)** - ZKPの理論と歴史
+- **[セキュリティ機構](./docs/DecryptionStrategies.md)** - 復号戦略と防御メカニズム
+- **[k-匿名性の限界](./docs/KAnonymityLimitations.md)** - k-匿名性だけでは不十分な理由
+
 ## ライセンス
 
 MIT License
